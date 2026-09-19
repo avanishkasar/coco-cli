@@ -1,0 +1,408 @@
+name: aml_risk_model
+description: >
+  AML Risk Intelligence semantic model for SentinelReg.
+  Covers transaction monitoring, account risk scoring, AML alerts,
+  customer KYC profiling, and ML-derived risk features.
+  Supports natural language queries from compliance analysts and investigators.
+
+tables:
+  # ─────────────────────────────────────────────────
+  # TABLE: TRANSACTIONS
+  # ─────────────────────────────────────────────────
+  - name: TRANSACTIONS
+    base_table:
+      database: SENTINEL_REG
+      schema: DATA
+      table: TRANSACTIONS
+    description: >
+      All financial transactions processed through the bank — includes cash deposits,
+      withdrawals, NEFT/RTGS/IMPS wire transfers, UPI payments, and cheque clearances.
+      Each record represents one debit or credit movement on a bank account.
+    dimensions:
+      - name: TRANSACTION_ID
+        expr: TRANSACTION_ID
+        data_type: VARCHAR
+        description: Unique identifier for each individual transaction.
+        synonyms: [txn_id, transaction number, payment ID, reference ID]
+        sample_values: [TXN-20240901-001, TXN-20240915-003]
+
+      - name: ACCOUNT_ID
+        expr: ACCOUNT_ID
+        data_type: VARCHAR
+        description: Bank account that originated or received the transaction.
+        synonyms: [account number, source account, debit account]
+        sample_values: [ACC-0006, ACC-9823, ACC-0009]
+
+      - name: COUNTERPARTY_ACCOUNT
+        expr: COUNTERPARTY_ACCOUNT
+        data_type: VARCHAR
+        description: Destination or source account for the counterparty of the transaction.
+        synonyms: [beneficiary account, recipient account, destination account]
+        sample_values: [ACC-0010, ACC-9820]
+
+      - name: COUNTERPARTY_BANK
+        expr: COUNTERPARTY_BANK
+        data_type: VARCHAR
+        description: Name of the bank where the counterparty account is held.
+        synonyms: [beneficiary bank, destination bank]
+        sample_values: [HDFC Bank, ICICI Bank, SBI, Kotak Bank]
+
+      - name: TRANSACTION_TYPE
+        expr: TRANSACTION_TYPE
+        data_type: VARCHAR
+        description: >
+          Category of the transaction. CASH_DEPOSIT and CASH_WITHDRAWAL are cash-based.
+          NEFT, RTGS, IMPS, UPI are electronic fund transfers.
+        synonyms: [payment type, transfer mode, transaction category]
+        sample_values: [CASH_DEPOSIT, CASH_WITHDRAWAL, NEFT, RTGS, IMPS, UPI, CHEQUE]
+
+      - name: CHANNEL
+        expr: CHANNEL
+        data_type: VARCHAR
+        description: Channel through which the transaction was initiated (branch, ATM, digital).
+        synonyms: [transaction channel, payment channel, mode of access]
+        sample_values: [BRANCH, ATM, NETBANKING, MOBILE, UPI]
+
+      - name: IS_CASH
+        expr: IS_CASH
+        data_type: BOOLEAN
+        description: TRUE if the transaction involved physical cash, FALSE for electronic.
+        synonyms: [cash transaction, physical cash, currency]
+        sample_values: ['TRUE', 'FALSE']
+
+      - name: CURRENCY
+        expr: CURRENCY
+        data_type: VARCHAR
+        description: Currency code for the transaction.
+        synonyms: [currency code, denomination]
+        sample_values: [INR, USD, EUR]
+
+    time_dimensions:
+      - name: TRANSACTION_DATE
+        expr: TRANSACTION_DATE
+        data_type: TIMESTAMP
+        description: Date and time when the transaction was executed.
+        synonyms: [transaction time, payment date, transfer date, when, date]
+        sample_values: ['2024-09-01 09:15:00', '2024-09-15 10:55:00']
+
+      - name: VALUE_DATE
+        expr: VALUE_DATE
+        data_type: DATE
+        description: Date on which the funds are actually credited or debited in the account.
+        synonyms: [settlement date, credit date]
+        sample_values: ['2024-09-01', '2024-09-15']
+
+    measures:
+      - name: AMOUNT_INR
+        expr: AMOUNT_INR
+        data_type: BIGINT
+        description: Transaction amount in Indian Rupees (INR).
+        synonyms: [amount, value, rupees, transaction value, transfer amount, sum]
+        sample_values: ['49000', '5000000', '225500']
+
+      - name: AMOUNT_USD
+        expr: AMOUNT_USD
+        data_type: FLOAT
+        description: Transaction amount in USD equivalent (where applicable).
+        synonyms: [USD amount, dollar value, foreign currency amount]
+        sample_values: ['590.0', '60241.0']
+
+  # ─────────────────────────────────────────────────
+  # TABLE: ACCOUNTS
+  # ─────────────────────────────────────────────────
+  - name: ACCOUNTS
+    base_table:
+      database: SENTINEL_REG
+      schema: DATA
+      table: ACCOUNTS
+    description: >
+      Bank accounts held by customers. Contains current balance, risk score,
+      account status, and average monthly credit information for monitoring.
+    dimensions:
+      - name: ACCOUNT_ID
+        expr: ACCOUNT_ID
+        data_type: VARCHAR
+        description: Unique identifier for the bank account.
+        synonyms: [account number, account ID, bank account]
+        sample_values: [ACC-0001, ACC-0006, ACC-9823]
+
+      - name: CUSTOMER_ID
+        expr: CUSTOMER_ID
+        data_type: VARCHAR
+        description: Customer who owns this account.
+        synonyms: [client ID, customer number, owner]
+        sample_values: [CUST-001, CUST-006, CUST-007]
+
+      - name: ACCOUNT_TYPE
+        expr: ACCOUNT_TYPE
+        data_type: VARCHAR
+        description: Type of bank account.
+        synonyms: [account category, account kind]
+        sample_values: [SAVINGS, CURRENT, NRE, NRO, OD]
+
+      - name: STATUS
+        expr: STATUS
+        data_type: VARCHAR
+        description: >
+          Current operational status of the account.
+          FROZEN accounts cannot transact; DORMANT accounts have had no activity.
+        synonyms: [account status, account state, operational status]
+        sample_values: [ACTIVE, DORMANT, FROZEN, CLOSED]
+
+    measures:
+      - name: CURRENT_BALANCE_INR
+        expr: CURRENT_BALANCE_INR
+        data_type: BIGINT
+        description: Current balance in the account in INR.
+        synonyms: [balance, available balance, account balance, funds]
+        sample_values: ['85000', '2300000', '0']
+
+      - name: RISK_SCORE
+        expr: RISK_SCORE
+        data_type: FLOAT
+        description: >
+          Composite risk score between 0.0 (no risk) and 1.0 (highest risk).
+          Scores above 0.7 are considered high-risk.
+        synonyms: [risk rating, risk level, risk indicator, danger score]
+        sample_values: ['0.08', '0.78', '0.99']
+
+      - name: AVERAGE_MONTHLY_CREDIT
+        expr: AVERAGE_MONTHLY_CREDIT
+        data_type: BIGINT
+        description: Average monthly credit inflow to the account in INR.
+        synonyms: [monthly inflow, average deposit, average credit]
+        sample_values: ['45000', '950000', '5000000']
+
+  # ─────────────────────────────────────────────────
+  # TABLE: CUSTOMERS
+  # ─────────────────────────────────────────────────
+  - name: CUSTOMERS
+    base_table:
+      database: SENTINEL_REG
+      schema: DATA
+      table: CUSTOMERS
+    description: >
+      Customer master data including KYC risk tier, PEP status, sanctions flag,
+      and due diligence metadata. High-risk customers require Enhanced Due Diligence (EDD).
+    dimensions:
+      - name: CUSTOMER_ID
+        expr: CUSTOMER_ID
+        data_type: VARCHAR
+        description: Unique customer identifier.
+        synonyms: [client ID, customer number]
+        sample_values: [CUST-001, CUST-006, CUST-008]
+
+      - name: FULL_NAME
+        expr: FULL_NAME
+        data_type: VARCHAR
+        description: Full legal name of the customer or registered entity.
+        synonyms: [name, customer name, entity name, company name]
+        sample_values: [Rajesh Kumar Sharma, Greenleaf Trading Co., Nexus Capital Advisory]
+
+      - name: ENTITY_TYPE
+        expr: ENTITY_TYPE
+        data_type: VARCHAR
+        description: Legal entity classification of the customer.
+        synonyms: [customer type, entity classification, individual or corporate]
+        sample_values: [INDIVIDUAL, CORPORATE, TRUST, NGO]
+
+      - name: KYC_TIER
+        expr: KYC_TIER
+        data_type: VARCHAR
+        description: >
+          KYC risk classification assigned after due diligence review.
+          HIGH and PROHIBITED require Enhanced Due Diligence.
+        synonyms: [risk category, risk tier, KYC level, risk class, risk band]
+        sample_values: [LOW, MEDIUM, HIGH, PROHIBITED]
+
+      - name: COUNTRY_OF_ORIGIN
+        expr: COUNTRY_OF_ORIGIN
+        data_type: VARCHAR
+        description: Customer's country of residence or incorporation.
+        synonyms: [country, nationality, domicile, jurisdiction]
+        sample_values: [India, UAE, Mauritius, Cayman Islands]
+
+      - name: PEP_FLAG
+        expr: PEP_FLAG
+        data_type: BOOLEAN
+        description: TRUE if the customer is a Politically Exposed Person (PEP) or PEP associate.
+        synonyms: [PEP, politically exposed, government official]
+        sample_values: ['TRUE', 'FALSE']
+
+      - name: SANCTIONS_FLAG
+        expr: SANCTIONS_FLAG
+        data_type: BOOLEAN
+        description: TRUE if the customer appears on any sanctions list (OFAC, UN, EU, RBI).
+        synonyms: [sanctioned, blacklisted, restricted]
+        sample_values: ['TRUE', 'FALSE']
+
+      - name: OCCUPATION
+        expr: OCCUPATION
+        data_type: VARCHAR
+        description: Declared occupation or business activity of the customer.
+        synonyms: [profession, business, trade, industry]
+        sample_values: [Software Engineer, General Trade, Financial Advisory]
+
+  # ─────────────────────────────────────────────────
+  # TABLE: AML_ALERTS
+  # ─────────────────────────────────────────────────
+  - name: AML_ALERTS
+    base_table:
+      database: SENTINEL_REG
+      schema: DATA
+      table: AML_ALERTS
+    description: >
+      AML and fraud alerts generated by automated rule-based detection systems.
+      Each alert is linked to one or more suspicious transactions and requires
+      analyst review. Unresolved alerts may be escalated to SAR filing.
+    dimensions:
+      - name: ALERT_ID
+        expr: ALERT_ID
+        data_type: VARCHAR
+        description: Unique identifier for the AML alert.
+        synonyms: [alert number, case ID, investigation ID]
+        sample_values: [ALERT-2024-0041, ALERT-2024-0043, ALERT-2024-0047]
+
+      - name: ACCOUNT_ID
+        expr: ACCOUNT_ID
+        data_type: VARCHAR
+        description: Account that triggered the alert.
+        synonyms: [flagged account, suspect account]
+        sample_values: [ACC-0006, ACC-9823, ACC-0009]
+
+      - name: ALERT_TYPE
+        expr: ALERT_TYPE
+        data_type: VARCHAR
+        description: >
+          Category of suspicious activity detected.
+          STRUCTURING: breaking large amounts into smaller transactions to evade CTR.
+          VELOCITY: unusually high frequency of transfers in a short time.
+          ROUND_TRIP: funds transferred out and returned in near-full amount.
+          CASH_INTENSIVE: disproportionate cash usage.
+        synonyms: [typology, fraud type, alert category, suspicious pattern, red flag]
+        sample_values: [STRUCTURING, VELOCITY, ROUND_TRIP, CASH_INTENSIVE, UNUSUAL_GEOGRAPHY]
+
+      - name: ALERT_SEVERITY
+        expr: ALERT_SEVERITY
+        data_type: VARCHAR
+        description: Severity level of the alert.
+        synonyms: [priority, severity level, urgency, criticality]
+        sample_values: [LOW, MEDIUM, HIGH, CRITICAL]
+
+      - name: ALERT_STATUS
+        expr: ALERT_STATUS
+        data_type: VARCHAR
+        description: Current investigation status of the alert.
+        synonyms: [status, alert state, investigation status, disposition]
+        sample_values: [OPEN, UNDER_REVIEW, ESCALATED, CLOSED_FALSE_POSITIVE, CLOSED_SAR_FILED]
+
+      - name: SAR_FILED
+        expr: SAR_FILED
+        data_type: BOOLEAN
+        description: TRUE if a Suspicious Activity Report (SAR) has been filed for this alert.
+        synonyms: [SAR submitted, STR filed, reported to FIU]
+        sample_values: ['TRUE', 'FALSE']
+
+      - name: ANALYST_ASSIGNED
+        expr: ANALYST_ASSIGNED
+        data_type: VARCHAR
+        description: Compliance analyst responsible for reviewing this alert.
+        synonyms: [investigator, assigned analyst, case officer]
+        sample_values: [Kiran Bose]
+
+    time_dimensions:
+      - name: ALERT_DATE
+        expr: ALERT_DATE
+        data_type: TIMESTAMP
+        description: Date and time when the alert was generated.
+        synonyms: [alert time, flagged on, detected on, when]
+        sample_values: ['2024-09-03 18:00:00', '2024-09-15 11:30:00']
+
+    measures:
+      - name: TOTAL_AMOUNT_INR
+        expr: TOTAL_AMOUNT_INR
+        data_type: BIGINT
+        description: Total value of transactions involved in the alert, in INR.
+        synonyms: [alert amount, suspicious amount, total exposure, transaction total]
+        sample_values: ['290400', '15850000', '225500']
+
+  # ─────────────────────────────────────────────────
+  # TABLE: ML_RISK_FEATURES
+  # ─────────────────────────────────────────────────
+  - name: ML_RISK_FEATURES
+    base_table:
+      database: SENTINEL_REG
+      schema: DATA
+      table: ML_RISK_FEATURES
+    description: >
+      Pre-computed machine learning risk features per account per day.
+      Used by the ML classifier to produce COMPUTED_RISK_SCORE.
+      Features include transaction velocity, cash ratio, structuring indicators,
+      round-trip flags, and geographic anomaly scores.
+    dimensions:
+      - name: ACCOUNT_ID
+        expr: ACCOUNT_ID
+        data_type: VARCHAR
+        description: Bank account for which features are computed.
+        synonyms: [account number]
+        sample_values: [ACC-0006, ACC-9823]
+
+      - name: ROUND_TRIP_DETECTED
+        expr: ROUND_TRIP_DETECTED
+        data_type: BOOLEAN
+        description: TRUE if a round-trip transfer pattern was detected for this account.
+        synonyms: [layering detected, round trip, circular transfer]
+        sample_values: ['TRUE', 'FALSE']
+
+      - name: IS_FRAUD_LABEL
+        expr: IS_FRAUD_LABEL
+        data_type: BOOLEAN
+        description: Ground truth fraud label used for ML model training (TRUE = confirmed fraud).
+        synonyms: [fraud flag, confirmed fraud, labeled fraud]
+        sample_values: ['TRUE', 'FALSE']
+
+    time_dimensions:
+      - name: FEATURE_DATE
+        expr: FEATURE_DATE
+        data_type: DATE
+        description: Date for which the feature snapshot was computed.
+        synonyms: [as of date, snapshot date]
+        sample_values: ['2024-09-18']
+
+    measures:
+      - name: COMPUTED_RISK_SCORE
+        expr: COMPUTED_RISK_SCORE
+        data_type: FLOAT
+        description: >
+          ML model output risk score between 0.0 and 1.0.
+          Accounts with score > 0.7 are considered high-risk.
+        synonyms: [ML risk score, model score, predicted risk, AI risk rating]
+        sample_values: ['0.08', '0.82', '0.88']
+
+      - name: CASH_TXN_RATIO_30D
+        expr: CASH_TXN_RATIO_30D
+        data_type: FLOAT
+        description: Proportion of transactions in the last 30 days that were cash-based.
+        synonyms: [cash ratio, cash percentage, cash intensity]
+        sample_values: ['0.00', '0.90', '0.50']
+
+      - name: JUST_BELOW_THRESHOLD_COUNT
+        expr: JUST_BELOW_THRESHOLD_COUNT
+        data_type: INT
+        description: Number of transactions just below the ₹50,000 CTR threshold — key structuring indicator.
+        synonyms: [structuring count, below threshold transactions, smurfing count]
+        sample_values: ['0', '6', '3']
+
+      - name: VELOCITY_SCORE
+        expr: VELOCITY_SCORE
+        data_type: FLOAT
+        description: Composite velocity anomaly score (0.0-1.0) based on transaction frequency.
+        synonyms: [velocity risk, frequency score, transaction speed]
+        sample_values: ['0.10', '0.88', '0.92']
+
+      - name: UNIQUE_COUNTERPARTIES_30D
+        expr: UNIQUE_COUNTERPARTIES_30D
+        data_type: INT
+        description: Number of distinct counterparties transacted with in last 30 days.
+        synonyms: [distinct recipients, counterparty count, fan-out count]
+        sample_values: ['2', '5', '3']

@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Streamlit
+.streamlit/
+
+# Snowflake
+*.p8
+*.pem
+
+# Logs
+*.log
+logs/
+
+# Data files (avoid committing sensitive data)
+*.csv
+*.xlsx
+*.parquet
+
+# Reference repos (local only — not part of this project)
+refs/
