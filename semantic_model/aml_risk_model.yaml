@@ -280,7 +280,7 @@ tables:
           ROUND_TRIP: funds transferred out and returned in near-full amount.
           CASH_INTENSIVE: disproportionate cash usage.
         synonyms: [typology, fraud type, alert category, suspicious pattern, red flag]
-        sample_values: [STRUCTURING, VELOCITY, ROUND_TRIP, CASH_INTENSIVE, UNUSUAL_GEOGRAPHY]
+        sample_values: [STRUCTURING, VELOCITY, ROUND_TRIP, CASH_INTENSIVE, SHELL_FANOUT, UNUSUAL_GEOGRAPHY]
 
       - name: ALERT_SEVERITY
         expr: ALERT_SEVERITY
