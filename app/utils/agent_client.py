@@ -1,120 +1,108 @@
 """
-Agent client — wraps Snowflake Cortex Agent REST API
-with streaming SSE support.
+Agent client — calls the Cortex Analyst REST API directly and executes
+the SQL it generates via Snowpark.
+
+Cortex Agents (the multi-tool orchestration object) is not available on
+trial accounts ("Access denied for trial accounts"). Cortex Analyst
+(text-to-SQL) is a lower-level primitive that is available, so this client
+talks to it directly: it converts the user's question into SQL against
+semantic_model/aml_risk_model.yaml, runs that SQL, and returns both the
+explanation and the resulting rows.
 """
 
-import json
 import os
-from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import Generator
 
 import requests
-import sseclient
+from dotenv import load_dotenv
+from snowflake.snowpark import Session
 
+load_dotenv()
 
-# ── Config from environment ──────────────────────────────────
 PAT    = os.getenv("SENTINEL_REG_PAT")
 HOST   = os.getenv("SENTINEL_REG_HOST")
-DB     = os.getenv("SENTINEL_REG_AGENT_DB",     "SNOWFLAKE_INTELLIGENCE")
-SCHEMA = os.getenv("SENTINEL_REG_AGENT_SCHEMA",  "AGENTS")
-AGENT  = os.getenv("SENTINEL_REG_AGENT_NAME",    "AML_RISK_AGENT")
+DB     = os.getenv("SNOWFLAKE_DATABASE", "SENTINEL_REG")
+SCHEMA = os.getenv("SNOWFLAKE_SCHEMA", "DATA")
 
-AGENT_URL = f"https://{HOST}/api/v2/databases/{DB}/schemas/{SCHEMA}/agents/{AGENT}:run"
+ANALYST_URL = f"https://{HOST}/api/v2/cortex/analyst/message"
+SEMANTIC_MODEL_FILE = f"@{DB.lower()}.{SCHEMA.lower()}.models/aml_risk_model.yaml"
 
 
-# ── Message types ────────────────────────────────────────────
-@dataclass
-class UserMessage:
-    text: str
-
-    def to_dict(self) -> dict:
-        return {
-            "role": "user",
-            "content": [{"type": "text", "text": self.text}],
+def _get_session() -> Session:
+    return Session.builder.configs(
+        {
+            "account": os.getenv("SNOWFLAKE_ACCOUNT"),
+            "user": os.getenv("SNOWFLAKE_USER"),
+            "password": os.getenv("SNOWFLAKE_PASSWORD"),
+            "role": os.getenv("SNOWFLAKE_ROLE", "SENTINEL_REG_ROLE"),
+            "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE", "SENTINEL_REG_WH"),
+            "database": DB,
+            "schema": SCHEMA,
         }
+    ).create()
 
 
-@dataclass
-class AgentResponse:
-    role: str
-    content: list = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return {"role": self.role, "content": self.content}
+def build_message(role: str, text: str) -> dict:
+    return {"role": role, "content": [{"type": "text", "text": text}]}
 
 
-# ── Core streaming call ──────────────────────────────────────
 def stream_agent_response(
     conversation_history: list[dict],
 ) -> Generator[dict, None, None]:
     """
-    Sends the conversation history to the Cortex Agent API and
-    yields structured event dicts as they stream in.
-
-    Event dict schema:
+    Yields structured event dicts:
         { "type": str, "data": any }
-
-    Types: text_delta | thinking | tool_use | tool_result |
-           chart | table | status | error | done
+    Types: text | sql | table | error | done
     """
     payload = {
-        "model": "claude-sonnet-4-5",
         "messages": conversation_history,
+        "semantic_model_file": SEMANTIC_MODEL_FILE,
     }
 
     try:
         resp = requests.post(
-            url=AGENT_URL,
+            ANALYST_URL,
             json=payload,
             headers={
                 "Authorization": f"Bearer {PAT}",
+                "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
                 "Content-Type": "application/json",
-                "Accept": "text/event-stream",
+                "Accept": "application/json",
             },
-            stream=True,
-            verify=False,
-            timeout=120,
+            timeout=60,
         )
         resp.raise_for_status()
     except requests.exceptions.RequestException as exc:
-        yield {"type": "error", "data": str(exc)}
+        detail = getattr(exc.response, "text", str(exc)) if hasattr(exc, "response") and exc.response is not None else str(exc)
+        yield {"type": "error", "data": f"{exc} — {detail[:500]}"}
+        yield {"type": "done", "data": None}
         return
 
-    client = sseclient.SSEClient(resp)
-    for event in client.events():
-        if not event.data or event.data.strip() == "[DONE]":
-            break
-        try:
-            raw = json.loads(event.data)
-        except json.JSONDecodeError:
-            continue
+    body = resp.json()
+    content = body.get("message", {}).get("content", [])
 
-        match event.event:
-            case "response.status":
-                yield {"type": "status", "data": raw.get("message", "")}
-            case "response.text.delta":
-                yield {"type": "text_delta", "data": raw.get("text", "")}
-            case "response.thinking.delta":
-                yield {"type": "thinking", "data": raw.get("text", "")}
-            case "response.tool_use":
-                yield {"type": "tool_use", "data": raw}
-            case "response.tool_result":
-                yield {"type": "tool_result", "data": raw}
-            case "response.chart":
-                yield {"type": "chart", "data": raw}
-            case "response.table":
-                yield {"type": "table", "data": raw}
-            case "response":
-                yield {"type": "done", "data": raw}
-            case "error":
-                yield {"type": "error", "data": raw.get("message", "Unknown error")}
+    sql_statement = None
+    for item in content:
+        item_type = item.get("type")
+        if item_type == "text":
+            yield {"type": "text", "data": item.get("text", "")}
+        elif item_type == "sql":
+            sql_statement = item.get("statement", "")
+            yield {"type": "sql", "data": sql_statement}
+        elif item_type == "suggestions":
+            suggestions = item.get("suggestions", [])
+            if suggestions:
+                yield {
+                    "type": "text",
+                    "data": "\n\nDid you mean:\n" + "\n".join(f"- {s}" for s in suggestions),
+                }
+
+    if sql_statement:
+        try:
+            session = _get_session()
+            df = session.sql(sql_statement).to_pandas()
+            yield {"type": "table", "data": df}
+        except Exception as exc:
+            yield {"type": "error", "data": f"Query execution failed: {exc}"}
 
     yield {"type": "done", "data": None}
-
-
-def build_message(role: str, text: str) -> dict:
-    return {
-        "role": role,
-        "content": [{"type": "text", "text": text}],
-    }

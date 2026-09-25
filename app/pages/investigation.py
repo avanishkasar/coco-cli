@@ -1,12 +1,9 @@
 """
 Investigation Chat Page — SentinelReg
-Natural language AML investigation interface powered by Cortex Agent.
+Natural language AML investigation interface powered by Cortex Analyst.
 """
 
-import json
 import streamlit as st
-import pandas as pd
-import numpy as np
 from utils.agent_client import stream_agent_response, build_message
 
 
@@ -65,54 +62,23 @@ def render_investigation():
         user_msg = build_message("user", prompt)
         st.session_state.chat_history.append(user_msg)
 
-        # Stream agent response
+        # Get agent response (Cortex Analyst: text + generated SQL + query results)
         with st.chat_message("assistant", avatar="🛡️"):
-            response_container = st.empty()
-            tool_expander      = None
-            full_text          = ""
-            thinking_text      = ""
+            full_text  = ""
+            sql_text   = None
+            result_df  = None
 
             with st.spinner("Analysing..."):
                 for event in stream_agent_response(st.session_state.chat_history):
                     match event["type"]:
-                        case "status":
-                            st.caption(f"⚙️ {event['data']}")
-
-                        case "text_delta":
+                        case "text":
                             full_text += event["data"]
-                            response_container.markdown(full_text + "▌")
 
-                        case "thinking":
-                            thinking_text += event["data"]
-                            with st.expander("🧠 Agent Reasoning", expanded=False):
-                                st.markdown(thinking_text)
-
-                        case "tool_use":
-                            tool_name = event["data"].get("name", "tool")
-                            with st.expander(f"🔧 Using tool: `{tool_name}`", expanded=False):
-                                st.json(event["data"])
-
-                        case "tool_result":
-                            with st.expander("📦 Tool result", expanded=False):
-                                st.json(event["data"])
+                        case "sql":
+                            sql_text = event["data"]
 
                         case "table":
-                            try:
-                                result_set = event["data"].get("result_set", {})
-                                cols_meta  = result_set.get("result_set_meta_data", {}).get("row_type", [])
-                                col_names  = [c["name"] for c in cols_meta]
-                                data       = np.array(result_set.get("data", []))
-                                if data.size:
-                                    st.dataframe(pd.DataFrame(data, columns=col_names), use_container_width=True)
-                            except Exception:
-                                pass
-
-                        case "chart":
-                            try:
-                                spec = json.loads(event["data"].get("chart_spec", "{}"))
-                                st.vega_lite_chart(spec, use_container_width=True)
-                            except Exception:
-                                pass
+                            result_df = event["data"]
 
                         case "error":
                             st.error(f"❌ Agent error: {event['data']}")
@@ -122,8 +88,16 @@ def render_investigation():
                         case "done":
                             break
 
-            # Finalise response display
-            response_container.markdown(full_text)
+            if full_text:
+                st.markdown(full_text)
+            if sql_text:
+                with st.expander("🔍 Generated SQL", expanded=False):
+                    st.code(sql_text, language="sql")
+            if result_df is not None and not result_df.empty:
+                st.dataframe(result_df, use_container_width=True)
+            elif result_df is not None:
+                st.info("Query returned no rows.")
+
             st.session_state.last_full_response = full_text
 
         # Store assistant response in history
