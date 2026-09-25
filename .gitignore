@@ -27,8 +27,8 @@ ENV/
 Thumbs.db
 desktop.ini
 
-# Streamlit
-.streamlit/
+# Streamlit (keep config.toml — it's the app theme, not secrets)
+.streamlit/secrets.toml
 
 # Snowflake
 *.p8

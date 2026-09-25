@@ -55,26 +55,23 @@ INSERT INTO REGULATORY_DOCS_CHUNKS VALUES
 'Layering is the stage of money laundering in which the launderer separates the proceeds of criminal activity from their source through a series of complex financial transactions. Common layering techniques include: transferring funds electronically between accounts in different countries; purchasing high-value assets and converting them to cash; shell company transactions; and converting cash into monetary instruments. Banks should be alert to transactions involving multiple jurisdictions, frequent wire transfers with no apparent business purpose, and accounts that receive and immediately transfer funds without holding them.','2023-01-01','US');
 
 -- ─────────────────────────────────────────────────────────────
--- Create Cortex Search Service over regulatory document chunks
+-- Cortex Search requires EMBED_TEXT_768, which is not available
+-- on trial accounts. Regulatory chunks are queried via Cortex
+-- Analyst (SQL/ILIKE over REGULATORY_DOCS_CHUNKS) instead — see
+-- the REGULATORY_DOCS_CHUNKS table in semantic_model/aml_risk_model.yaml.
+-- If you're on a paid account with Cortex Search available, you can
+-- swap back to semantic search by uncommenting the block below and
+-- restoring the CORTEX SEARCH SERVICE tool in setup/05_create_agent.sql.
 -- ─────────────────────────────────────────────────────────────
-CREATE OR REPLACE CORTEX SEARCH SERVICE AML_REGULATORY_SEARCH
-  ON CHUNK_TEXT
-  ATTRIBUTES DOC_NAME, DOC_TYPE, SECTION_NUMBER, SECTION_TITLE, JURISDICTION, EFFECTIVE_DATE
-  WAREHOUSE = SENTINEL_REG_WH
-  TARGET_LAG = '24 hours'
-  AS (
-    SELECT
-        CHUNK_ID,
-        CHUNK_TEXT,
-        DOC_NAME,
-        DOC_TYPE,
-        SECTION_NUMBER,
-        SECTION_TITLE,
-        JURISDICTION,
-        EFFECTIVE_DATE
-    FROM REGULATORY_DOCS_CHUNKS
-  );
+-- CREATE OR REPLACE CORTEX SEARCH SERVICE AML_REGULATORY_SEARCH
+--   ON CHUNK_TEXT
+--   ATTRIBUTES DOC_NAME, DOC_TYPE, SECTION_NUMBER, SECTION_TITLE, JURISDICTION, EFFECTIVE_DATE
+--   WAREHOUSE = SENTINEL_REG_WH
+--   TARGET_LAG = '24 hours'
+--   AS (
+--     SELECT CHUNK_ID, CHUNK_TEXT, DOC_NAME, DOC_TYPE, SECTION_NUMBER, SECTION_TITLE, JURISDICTION, EFFECTIVE_DATE
+--     FROM REGULATORY_DOCS_CHUNKS
+--   );
+-- GRANT USAGE ON CORTEX SEARCH SERVICE AML_REGULATORY_SEARCH TO ROLE SENTINEL_REG_ROLE;
 
-GRANT USAGE ON CORTEX SEARCH SERVICE AML_REGULATORY_SEARCH TO ROLE SENTINEL_REG_ROLE;
-
-SELECT 'Step 4 complete: Cortex Search service created over regulatory documents.' AS STATUS;
+SELECT 'Step 4 complete: regulatory doc chunks loaded (queried via Cortex Analyst).' AS STATUS;
