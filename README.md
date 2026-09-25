@@ -21,7 +21,7 @@ The system moves a compliance analyst from a raw alert all the way to a document
 | Capability | Description |
 |---|---|
 | 🔍 **Natural Language Investigation** | Ask any question about accounts, transactions, or patterns in plain English |
-| 🧠 **Dual Intelligence Engine** | Cortex Analyst (Text-to-SQL) + Cortex Search (Regulatory RAG) combined |
+| 🧠 **Unified Text-to-SQL Engine** | Cortex Analyst answers both transactional questions and regulatory questions (over `REGULATORY_DOCS_CHUNKS`) from one semantic model |
 | ⚠️ **Real-Time Fraud Signal Detection** | Velocity checks, structuring patterns, round-trip transfers, shell account behavior |
 | 📋 **SAR Report Generation** | One-click Suspicious Activity Report as audit-ready Markdown/PDF |
 | 🏦 **Regulatory Compliance Grounding** | Every answer cites RBI / FinCEN policy clause |
@@ -71,7 +71,7 @@ coco-cli/
 │   ├── 01_setup_db.sql           # Database, schema, warehouse, roles
 │   ├── 02_create_tables.sql      # AML transactions, accounts, alerts, ML features
 │   ├── 03_load_synthetic_data.sql# Synthetic AML scenario data (6 fraud typologies)
-│   ├── 04_cortex_search.sql      # Regulatory doc chunks + Cortex Search service
+│   ├── 04_cortex_search.sql      # Regulatory doc chunks (Cortex Search commented out — needs paid account)
 │   └── 05_create_agent.sql       # Cortex Agent definition (Analyst + Search tools)
 ├── semantic_model/
 │   └── aml_risk_model.yaml       # Cortex Analyst semantic model
@@ -182,7 +182,7 @@ can also be explained live in the UI:
 
 - **Snowflake Cortex Agents** — Multi-tool AI agent orchestration
 - **Snowflake Cortex Analyst** — Natural language to SQL on transaction data
-- **Snowflake Cortex Search** — Semantic search over regulatory documents
+- **Snowflake Cortex Search** — supported by the architecture but disabled by default (needs `EMBED_TEXT_768`, unavailable on trial accounts); regulatory Q&A runs through Cortex Analyst/SQL instead
 - **Snowflake ML** — Supervised fraud classification (XGBoost via Snowpark)
 - **Snowflake CoCo CLI** — Agentic workflow automation and skills
 - **Streamlit** — Interactive compliance dashboard UI
@@ -212,10 +212,11 @@ is required.** You need:
 | `SENTINEL_REG_HOST` | Your account's Snowflake hostname, e.g. `xy12345.snowflakecomputing.com`. |
 | CoCo CLI auth | Run `coco auth login` (or your org's SSO flow) against the same account so `.coco/skills/` and `AGENTS.md` are usable from the CLI. |
 
-Cortex AI (Cortex Analyst, Cortex Search, Cortex Agents) must be **enabled on the
-account/region** — this is on by default for most trial and Snowflake-provisioned
-accounts; if a query fails with a Cortex-not-enabled error, ask your Snowflake admin
-to enable it for your region.
+Cortex AI (Cortex Analyst, Cortex Agents) must be **enabled on the account/region** —
+this is on by default for most trial and Snowflake-provisioned accounts. Cortex
+Search specifically requires `EMBED_TEXT_768`, which trial accounts don't have
+access to; this project routes regulatory Q&A through Cortex Analyst/SQL instead
+(see `setup/04_cortex_search.sql`), so no Cortex Search entitlement is required.
 
 ---
 
@@ -224,7 +225,7 @@ to enable it for your region.
 | Criterion | How SentinelReg addresses it |
 |---|---|
 | **Real-World Relevance** | Targets an actual, high-stakes GCC workflow — AML/fraud investigation and SAR/STR filing — with citations traceable to real RBI, FATF, Basel and FinCEN text, and filing deadlines computed from real regulatory timelines (7 days FIU-IND, 30/60 days FinCEN). |
-| **Technical Execution** | Combines four distinct Snowflake AI primitives in one agent — Cortex Analyst (text-to-SQL), Cortex Search (regulatory RAG), a Snowpark ML classifier, and Cortex Agent orchestration — plus CoCo CLI Agent Skills (`.coco/skills/`) and an `AGENTS.md` so the CLI itself is a first-class way to operate the system, not just the web UI. |
+| **Technical Execution** | Combines Cortex Analyst (text-to-SQL over both transactional and regulatory data), a Snowpark ML classifier, and Cortex Agent orchestration — plus CoCo CLI Agent Skills (`.coco/skills/`) and an `AGENTS.md` so the CLI itself is a first-class way to operate the system, not just the web UI. |
 | **Solution Completeness** | End-to-end: seeded multi-typology synthetic data → detection (rule-based *and* ML) → natural-language investigation → evidence-backed, regulator-ready SAR generation → dashboard for portfolio-level triage — runnable from a clean Snowflake account with five idempotent setup scripts. |
 
 ---

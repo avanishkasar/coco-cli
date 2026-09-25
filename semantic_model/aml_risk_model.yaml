@@ -7,6 +7,74 @@ description: >
 
 tables:
   # ─────────────────────────────────────────────────
+  # TABLE: REGULATORY_DOCS_CHUNKS
+  # ─────────────────────────────────────────────────
+  - name: REGULATORY_DOCS_CHUNKS
+    base_table:
+      database: SENTINEL_REG
+      schema: DATA
+      table: REGULATORY_DOCS_CHUNKS
+    description: >
+      Chunked regulatory text from RBI, FATF, Basel, and FinCEN AML/KYC guidance.
+      Use this table to answer any question about regulatory requirements,
+      filing deadlines, or compliance obligations. Search CHUNK_TEXT, SECTION_TITLE
+      for keywords related to the user's question (e.g. structuring, SAR, STR, CTR,
+      PEP, layering, transaction monitoring).
+    dimensions:
+      - name: CHUNK_ID
+        expr: CHUNK_ID
+        data_type: VARCHAR
+        description: Unique identifier for this regulatory text chunk.
+        sample_values: [RBI-KYC-005, FINCEN-002]
+
+      - name: DOC_NAME
+        expr: DOC_NAME
+        data_type: VARCHAR
+        description: Full name of the source regulatory document.
+        synonyms: [document name, regulation name, source document]
+
+      - name: DOC_TYPE
+        expr: DOC_TYPE
+        data_type: VARCHAR
+        description: Issuing body of the regulation.
+        synonyms: [regulator, framework, issuing authority]
+        sample_values: [RBI, FATF, BASEL, FINCEN]
+
+      - name: SECTION_NUMBER
+        expr: SECTION_NUMBER
+        data_type: VARCHAR
+        description: Paragraph, section, or recommendation number within the source document.
+        synonyms: [para, paragraph, clause, recommendation number]
+
+      - name: SECTION_TITLE
+        expr: SECTION_TITLE
+        data_type: VARCHAR
+        description: Short title of this section, e.g. "Structuring" or "Suspicious Activity Reporting".
+        synonyms: [topic, subject, heading]
+
+      - name: CHUNK_TEXT
+        expr: CHUNK_TEXT
+        data_type: TEXT
+        description: >
+          The actual regulatory text. This is what the agent should quote and
+          cite when answering a compliance question — never fabricate text
+          that isn't in this column.
+        synonyms: [regulation text, policy text, clause text, requirement]
+
+      - name: JURISDICTION
+        expr: JURISDICTION
+        data_type: VARCHAR
+        description: Jurisdiction the requirement applies in.
+        synonyms: [country, region]
+        sample_values: [INDIA, US, GLOBAL]
+
+    time_dimensions:
+      - name: EFFECTIVE_DATE
+        expr: EFFECTIVE_DATE
+        data_type: DATE
+        description: Date this version of the guidance took effect.
+
+  # ─────────────────────────────────────────────────
   # TABLE: TRANSACTIONS
   # ─────────────────────────────────────────────────
   - name: TRANSACTIONS

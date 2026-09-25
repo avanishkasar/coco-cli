@@ -9,11 +9,16 @@ compliance teams, built for the Snowflake CoCo CLI Hackathon 2026 (GCC Edition),
 problem statement: **Risk, Fraud & Regulatory Intelligence Copilot**.
 
 It combines:
-- **Cortex Analyst** — natural-language → SQL over `TRANSACTIONS`, `ACCOUNTS`, `AML_ALERTS`, `ML_RISK_FEATURES`
-- **Cortex Search** — semantic RAG over chunked RBI / FATF / Basel / FinCEN regulatory text
-- **Cortex Agent** — orchestrates both tools behind one conversational endpoint
+- **Cortex Analyst** — natural-language → SQL over `TRANSACTIONS`, `ACCOUNTS`, `AML_ALERTS`,
+  `ML_RISK_FEATURES`, and `REGULATORY_DOCS_CHUNKS` (chunked RBI / FATF / Basel / FinCEN text,
+  queried via SQL/ILIKE rather than Cortex Search — see below)
+- **Cortex Agent** — orchestrates the Analyst tool behind one conversational endpoint
 - **Snowflake ML (Snowpark ML)** — XGBoost fraud classifier producing `COMPUTED_RISK_SCORE`
 - **Streamlit** — investigation chat, risk command center, SAR generator UI
+
+> Cortex Search is intentionally not used: it depends on `EMBED_TEXT_768`, which is
+> unavailable on trial accounts. `setup/04_cortex_search.sql` has the Cortex Search
+> definition commented out for anyone running this on a paid account later.
 
 ## Repo map
 

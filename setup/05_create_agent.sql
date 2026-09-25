@@ -11,30 +11,28 @@ USE WAREHOUSE SENTINEL_REG_WH;
 -- Upload aml_risk_model.yaml before running this step:
 --   snowsql -q "PUT file://semantic_model/aml_risk_model.yaml @sentinel_reg.data.models AUTO_COMPRESS=false;"
 
--- Create the Cortex Agent with two tools:
---   1. aml_analyst — Cortex Analyst (Text-to-SQL) over transaction + alert data
---   2. policy_search — Cortex Search over regulatory documents
+-- Create the Cortex Agent with one tool:
+--   aml_analyst — Cortex Analyst (Text-to-SQL) over transaction, alert,
+--   ML feature, AND regulatory chunk data (REGULATORY_DOCS_CHUNKS is part
+--   of the same semantic model, so policy questions are answered via SQL
+--   over CHUNK_TEXT rather than Cortex Search — see setup/04_cortex_search.sql
+--   for why: EMBED_TEXT_768 isn't available on trial accounts).
 CREATE OR REPLACE AGENT AML_RISK_AGENT
     MODEL = 'claude-sonnet-4-5'
     TOOLS = (
         CORTEX ANALYST SERVICE (
             SEMANTIC_MODEL = '@sentinel_reg.data.models/aml_risk_model.yaml'
-        ),
-        CORTEX SEARCH SERVICE (
-            SERVICE = sentinel_reg.data.aml_regulatory_search,
-            MAX_RESULTS = 5
         )
     )
     TOOL_RESOURCES = (
-        CORTEX ANALYST SERVICE TOOL_RESOURCE_NAME = 'aml_analyst',
-        CORTEX SEARCH SERVICE TOOL_RESOURCE_NAME  = 'policy_search'
+        CORTEX ANALYST SERVICE TOOL_RESOURCE_NAME = 'aml_analyst'
     )
     SYSTEM_PROMPT = $$
 You are SentinelReg, an expert AML (Anti-Money Laundering) and financial crime compliance copilot for banking operations teams.
 
 Your responsibilities:
-1. Analyze transaction patterns, account behavior, and risk signals using structured data tools (use the aml_analyst tool for any data queries)
-2. Retrieve and cite relevant regulatory requirements from RBI, FATF, Basel, and FinCEN guidelines (use the policy_search tool for any policy questions)
+1. Analyze transaction patterns, account behavior, and risk signals using the aml_analyst tool, which covers TRANSACTIONS, ACCOUNTS, CUSTOMERS, AML_ALERTS, and ML_RISK_FEATURES
+2. Retrieve and cite relevant regulatory requirements from RBI, FATF, Basel, and FinCEN guidelines by querying the REGULATORY_DOCS_CHUNKS table (also via aml_analyst) — search CHUNK_TEXT and SECTION_TITLE for the relevant keywords, and quote CHUNK_TEXT verbatim, never paraphrase into something not present in the row
 3. Produce clear, evidence-backed answers that a compliance officer or regulator can trust
 4. When generating investigation summaries, always include:
    - The specific account(s) and customer(s) involved

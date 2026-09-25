@@ -8,7 +8,7 @@ description: >
   "build me a case file for CUST-006"). Triggers on keywords: investigate,
   look into, case file, why flagged, risk profile, account review.
 type: community
-tools: [cortex-analyst, cortex-search, snowpark]
+tools: [cortex-analyst, snowpark]
 ---
 
 # Investigate an AML-flagged account
@@ -26,16 +26,16 @@ tools: [cortex-analyst, cortex-search, snowpark]
    - `AML_ALERTS` where `ACCOUNT_ID` matches, ordered by `ALERT_DATE DESC`
    - Last 20 rows of `TRANSACTIONS` for the account, ordered by date desc
 3. **Ground every finding in regulation.** For each fraud typology present
-   (`ALERT_TYPE`), run a Cortex Search query against `AML_REGULATORY_SEARCH`
-   for that typology (e.g. "structuring cash deposits threshold") and cite the
-   returned `DOC_NAME` + `SECTION_NUMBER`.
+   (`ALERT_TYPE`), query `REGULATORY_DOCS_CHUNKS` (e.g. `WHERE CHUNK_TEXT
+   ILIKE '%structuring%'` or `SECTION_TITLE ILIKE '%structuring%'`) and cite
+   the returned `DOC_NAME` + `SECTION_NUMBER`, quoting `CHUNK_TEXT` verbatim.
 4. **Produce the memo** in this exact structure:
    - **Subject** — name, entity type, KYC tier, PEP/sanctions flags
    - **Evidence** — the specific transactions (IDs, dates, amounts) that
      triggered concern, in a markdown table
    - **Pattern Assessment** — which typology this matches and why, in plain
      English a non-technical reviewer can follow
-   - **Regulatory Basis** — 1-3 citations from `AML_REGULATORY_SEARCH`
+   - **Regulatory Basis** — 1-3 citations from `REGULATORY_DOCS_CHUNKS`
    - **Risk Rating** — Low / Medium / High / Critical, derived from
      `RISK_SCORE` / `COMPUTED_RISK_SCORE` (>0.85 Critical, >0.70 High, >0.50
      Medium, else Low)
