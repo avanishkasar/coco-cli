@@ -117,15 +117,10 @@ VALUES
 ('TXN-20240921-003','ACC-0012','ACC-0014','Standard Chartered','2024-09-21 10:45:00','2024-09-21',3000000,'RTGS','NETBANKING','Trade facilitation','REF-052',FALSE,'INR',1.0,35928.0),
 ('TXN-20240921-004','ACC-0012','ACC-9823','Axis Bank',   '2024-09-21 11:05:00','2024-09-21',2900000,'RTGS','NETBANKING','Referral commission','REF-053',FALSE,'INR',1.0,34730.0);
 
--- ─────────────────────────────────────────────────────────────
--- AML ALERTS
--- Note: each alert is its own single-row INSERT because Snowflake
--- does not allow ARRAY_CONSTRUCT() inside a multi-row VALUES list.
--- ─────────────────────────────────────────────────────────────
 INSERT INTO AML_ALERTS (ALERT_ID, ACCOUNT_ID, CUSTOMER_ID, ALERT_DATE, ALERT_TYPE, ALERT_SEVERITY, ALERT_STATUS, TRIGGER_RULE, TRANSACTION_IDS, TOTAL_AMOUNT_INR, ANALYST_ASSIGNED, INVESTIGATION_NOTES, SAR_FILED, SAR_REFERENCE)
-VALUES (
+SELECT
     'ALERT-2024-0041', 'ACC-0006', 'CUST-006',
-    '2024-09-03 18:00:00',
+    '2024-09-03 18:00:00'::TIMESTAMP,
     'STRUCTURING',
     'HIGH',
     'UNDER_REVIEW',
@@ -135,13 +130,12 @@ VALUES (
     'Kiran Bose',
     'Six cash deposits between ₹47,500 and ₹49,500 over 3 days — consistent with structuring to avoid CTR threshold.',
     FALSE,
-    NULL
-);
+    NULL;
 
 INSERT INTO AML_ALERTS (ALERT_ID, ACCOUNT_ID, CUSTOMER_ID, ALERT_DATE, ALERT_TYPE, ALERT_SEVERITY, ALERT_STATUS, TRIGGER_RULE, TRANSACTION_IDS, TOTAL_AMOUNT_INR, ANALYST_ASSIGNED, INVESTIGATION_NOTES, SAR_FILED, SAR_REFERENCE)
-VALUES (
+SELECT
     'ALERT-2024-0043', 'ACC-0009', 'CUST-008',
-    '2024-09-12 20:00:00',
+    '2024-09-12 20:00:00'::TIMESTAMP,
     'ROUND_TRIP',
     'CRITICAL',
     'ESCALATED',
@@ -151,13 +145,12 @@ VALUES (
     'Kiran Bose',
     'PEP-linked entity Nexus Capital transferred ₹5Cr to frozen shell account ACC-0010, received ₹4.9Cr back within 48 hours. Secondary transfer to cash-intensive Greenleaf Trading.',
     FALSE,
-    NULL
-);
+    NULL;
 
 INSERT INTO AML_ALERTS (ALERT_ID, ACCOUNT_ID, CUSTOMER_ID, ALERT_DATE, ALERT_TYPE, ALERT_SEVERITY, ALERT_STATUS, TRIGGER_RULE, TRANSACTION_IDS, TOTAL_AMOUNT_INR, ANALYST_ASSIGNED, INVESTIGATION_NOTES, SAR_FILED, SAR_REFERENCE)
-VALUES (
+SELECT
     'ALERT-2024-0047', 'ACC-9823', 'CUST-007',
-    '2024-09-15 11:30:00',
+    '2024-09-15 11:30:00'::TIMESTAMP,
     'VELOCITY',
     'HIGH',
     'OPEN',
@@ -167,13 +160,12 @@ VALUES (
     NULL,
     NULL,
     FALSE,
-    NULL
-);
+    NULL;
 
 INSERT INTO AML_ALERTS (ALERT_ID, ACCOUNT_ID, CUSTOMER_ID, ALERT_DATE, ALERT_TYPE, ALERT_SEVERITY, ALERT_STATUS, TRIGGER_RULE, TRANSACTION_IDS, TOTAL_AMOUNT_INR, ANALYST_ASSIGNED, INVESTIGATION_NOTES, SAR_FILED, SAR_REFERENCE)
-VALUES (
+SELECT
     'ALERT-2024-0050', 'ACC-0004', 'CUST-004',
-    '2024-09-19 08:00:00',
+    '2024-09-19 08:00:00'::TIMESTAMP,
     'CASH_INTENSIVE',
     'MEDIUM',
     'OPEN',
@@ -183,13 +175,12 @@ VALUES (
     NULL,
     'Five large cash deposits (₹3.9L–₹6.1L) over two weeks against a declared export business — cash usage inconsistent with cross-border trade profile.',
     FALSE,
-    NULL
-);
+    NULL;
 
 INSERT INTO AML_ALERTS (ALERT_ID, ACCOUNT_ID, CUSTOMER_ID, ALERT_DATE, ALERT_TYPE, ALERT_SEVERITY, ALERT_STATUS, TRIGGER_RULE, TRANSACTION_IDS, TOTAL_AMOUNT_INR, ANALYST_ASSIGNED, INVESTIGATION_NOTES, SAR_FILED, SAR_REFERENCE)
-VALUES (
+SELECT
     'ALERT-2024-0052', 'ACC-0009', 'CUST-008',
-    '2024-09-21 12:00:00',
+    '2024-09-21 12:00:00'::TIMESTAMP,
     'SHELL_FANOUT',
     'CRITICAL',
     'ESCALATED',
@@ -199,8 +190,7 @@ VALUES (
     'Kiran Bose',
     'PEP-linked Nexus Capital received ₹90L from an unrelated advisory client and fanned it out within 2 hours to three offshore shell entities (Silverline, Meridian, Oceanic) plus already-flagged ACC-9823 — classic layering signature.',
     FALSE,
-    NULL
-);
+    NULL;
 
 -- ─────────────────────────────────────────────────────────────
 -- ML RISK FEATURES (pre-computed snapshot for demonstration)
