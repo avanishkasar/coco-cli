@@ -17,24 +17,26 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS — elegant emerald-on-ivory enterprise theme ────
+# ── Custom CSS — refined emerald & gold enterprise theme ──────
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
 
     :root {
         --sr-green-900: #0B2E22;
         --sr-green-700: #0B4F3A;
         --sr-green-600: #0E6B4E;
         --sr-green-500: #147C5B;
-        --sr-gold: #C8A24A;
-        --sr-ivory: #FBFAF6;
+        --sr-slate: #23322B;
+        --sr-gold: #A9790A;
+        --sr-gold-light: #EAC166;
+        --sr-ivory: #FAF9F5;
         --sr-cream: #F3F1E9;
-        --sr-ink: #16241E;
+        --sr-ink: #1B1C1A;
         --sr-muted: #5B6B62;
-        --sr-border: #E7E2D3;
-        --sr-critical: #8C1C13;
-        --sr-high: #B8791A;
+        --sr-border: #E3E2DF;
+        --sr-critical: #BA1A1A;
+        --sr-high: #A9790A;
         --sr-medium: #147C5B;
         --sr-low: #6B7280;
     }
@@ -45,9 +47,12 @@ st.markdown("""
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     h1, h2, h3, .sentinel-header h1 {
-        font-family: 'Fraunces', Georgia, serif;
+        font-family: 'Playfair Display', Georgia, serif;
         font-weight: 600;
         color: var(--sr-green-900);
+    }
+    code, pre, .stCodeBlock, [data-testid="stCodeBlock"] {
+        font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace !important;
     }
     [data-testid="stHeader"] { background: transparent; }
     [data-testid="stToolbar"] { visibility: visible; }
@@ -60,7 +65,7 @@ st.markdown("""
     }
     [data-testid="stSidebar"] * { color: #EFEAD9 !important; }
     [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-        font-family: 'Fraunces', Georgia, serif;
+        font-family: 'Playfair Display', Georgia, serif;
         color: #FFFFFF !important;
         letter-spacing: 0.01em;
     }
@@ -110,7 +115,7 @@ st.markdown("""
     }
     .sr-brand-icon { font-size: 1.6rem; }
     .sr-brand-name {
-        font-family: 'Fraunces', Georgia, serif;
+        font-family: 'Playfair Display', Georgia, serif;
         font-size: 1.35rem;
         font-weight: 600;
         color: #FFFFFF !important;
@@ -129,6 +134,8 @@ st.markdown("""
 
     /* ── Main header banner ──────────────────────────────── */
     .sentinel-header {
+        position: relative;
+        overflow: hidden;
         background: linear-gradient(90deg, var(--sr-green-900) 0%, var(--sr-green-600) 100%);
         padding: 1.6rem 2.2rem;
         border-radius: 12px;
@@ -137,19 +144,45 @@ st.markdown("""
         border-bottom: 3px solid var(--sr-gold);
         box-shadow: 0 6px 20px rgba(11,46,34,0.18);
     }
+    .sentinel-header::before {
+        content: "";
+        position: absolute;
+        top: -60px;
+        right: -60px;
+        width: 220px;
+        height: 220px;
+        border-radius: 50%;
+        background: rgba(234,193,102,0.12);
+        filter: blur(20px);
+        pointer-events: none;
+    }
+    .sentinel-header h1, .sentinel-header p { position: relative; z-index: 1; }
     .sentinel-header h1 { margin: 0; font-size: 1.85rem; color: #FFFFFF !important; }
     .sentinel-header p  { margin: 0.4rem 0 0 0; font-size: 0.98rem; opacity: 0.88; font-family: 'Inter', sans-serif; }
 
-    /* ── Severity badges ─────────────────────────────────── */
+    /* ── Severity badges (dot + pill, matching row-accent style) ── */
     .badge-critical, .badge-high, .badge-medium, .badge-low {
-        display: inline-block;
-        color: #FFF9F0;
-        padding: 3px 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: #FFFFFF;
+        padding: 3px 12px 3px 9px;
         border-radius: 20px;
         font-size: 0.72rem;
         font-weight: 600;
         letter-spacing: 0.04em;
         text-transform: uppercase;
+    }
+    .badge-critical, .badge-high, .badge-medium, .badge-low {
+        position: relative;
+    }
+    .badge-critical::before, .badge-high::before, .badge-medium::before, .badge-low::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.85);
+        flex-shrink: 0;
     }
     .badge-critical { background: var(--sr-critical); }
     .badge-high     { background: var(--sr-high); }
@@ -176,7 +209,7 @@ st.markdown("""
     }
     [data-testid="stMetricValue"] {
         color: var(--sr-green-900);
-        font-family: 'Fraunces', Georgia, serif;
+        font-family: 'Playfair Display', Georgia, serif;
     }
     [data-testid="stMetricLabel"] { color: var(--sr-muted); }
 
@@ -276,6 +309,7 @@ with st.sidebar:
     <div class="sr-brand-tag">AML &amp; Regulatory Intelligence</div>
     """, unsafe_allow_html=True)
     st.divider()
+    st.markdown('<div class="sr-chip-label" style="margin-top:0;">Core Modules</div>', unsafe_allow_html=True)
 
 # ── Page routing via native Streamlit navigation ──────────────
 from pages.investigation import render_investigation

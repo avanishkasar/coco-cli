@@ -107,10 +107,10 @@ def render_dashboard():
             # Colour-code severity
             def severity_badge(val):
                 colours = {
-                    "CRITICAL": "background-color:#8C1C13;color:#FFF9F0;font-weight:600",
-                    "HIGH":     "background-color:#B8791A;color:#FFF9F0;font-weight:600",
-                    "MEDIUM":   "background-color:#147C5B;color:#FFF9F0;font-weight:600",
-                    "LOW":      "background-color:#6B7280;color:#FFF9F0;font-weight:600",
+                    "CRITICAL": "background-color:#BA1A1A;color:#FFFFFF;font-weight:600",
+                    "HIGH":     "background-color:#A9790A;color:#FFFFFF;font-weight:600",
+                    "MEDIUM":   "background-color:#147C5B;color:#FFFFFF;font-weight:600",
+                    "LOW":      "background-color:#6B7280;color:#FFFFFF;font-weight:600",
                 }
                 return colours.get(val, "")
 
