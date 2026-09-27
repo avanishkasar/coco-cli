@@ -6,7 +6,15 @@ Live command center view of AML risk signals, alert queues, and account risk dis
 import os
 import streamlit as st
 import pandas as pd
+import altair as alt
 from snowflake.snowpark import Session
+
+SEVERITY_COLORS = {
+    "CRITICAL": "#BA1A1A",
+    "HIGH": "#A9790A",
+    "MEDIUM": "#147C5B",
+    "LOW": "#6B7280",
+}
 
 
 @st.cache_resource
@@ -61,16 +69,22 @@ def render_dashboard():
     """)
 
     def safe_count(df):
-        return int(df.iloc[0, 0]) if not df.empty else "—"
+        return int(df.iloc[0, 0]) if not df.empty else 0
 
-    with m1:
-        st.metric("🚨 Open Alerts", safe_count(open_alerts_df))
-    with m2:
-        st.metric("🔴 Critical", safe_count(critical_df))
-    with m3:
-        st.metric("⚠️ High-Risk Accounts", safe_count(high_risk_df))
-    with m4:
-        st.metric("📋 SAR Pending", safe_count(sar_pending_df))
+    def metric_card(col, css_class, label, value, sub):
+        with col:
+            st.markdown(f"""
+            <div class="metric-card {css_class}">
+                <div class="metric-card-label">{label}</div>
+                <div class="metric-card-value">{value}</div>
+                <div class="metric-card-sub">{sub}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    metric_card(m1, "", "🚨 Open Alerts", safe_count(open_alerts_df), "Awaiting analyst triage")
+    metric_card(m2, "critical", "🔴 Critical", safe_count(critical_df), "Immediate escalation required")
+    metric_card(m3, "high", "⚠️ High-Risk Accounts", safe_count(high_risk_df), "Risk score above 0.70")
+    metric_card(m4, "medium", "📋 SAR Pending", safe_count(sar_pending_df), "Escalated, not yet filed")
 
     st.divider()
 
@@ -78,7 +92,7 @@ def render_dashboard():
     left_col, right_col = st.columns([3, 2])
 
     # ── Alert queue ───────────────────────────────────────────
-    with left_col:
+    with left_col, st.container(border=True):
         st.subheader("🚨 Active Alert Queue")
 
         alerts_df = run_query("""
@@ -104,6 +118,33 @@ def render_dashboard():
         if alerts_df.empty:
             st.info("✅ No active alerts. All clear.")
         else:
+            # ── Filter tabs + search (client-side, over the fetched queue) ──
+            severities_present = list(alerts_df["ALERT_SEVERITY"].unique())
+            filter_choice = st.radio(
+                "Filter by severity",
+                options=["All"] + severities_present,
+                horizontal=True,
+                label_visibility="collapsed",
+                key="alert_severity_filter",
+            )
+            search_term = st.text_input(
+                "Search",
+                placeholder="Filter by alert ID, customer, or typology…",
+                label_visibility="collapsed",
+                key="alert_search",
+            )
+
+            filtered_df = alerts_df
+            if filter_choice != "All":
+                filtered_df = filtered_df[filtered_df["ALERT_SEVERITY"] == filter_choice]
+            if search_term:
+                mask = filtered_df.apply(
+                    lambda row: search_term.lower() in " ".join(row.astype(str)).lower(), axis=1
+                )
+                filtered_df = filtered_df[mask]
+
+            st.caption(f"Showing {len(filtered_df)} of {len(alerts_df)} active alerts")
+
             # Colour-code severity
             def severity_badge(val):
                 colours = {
@@ -114,13 +155,13 @@ def render_dashboard():
                 }
                 return colours.get(val, "")
 
-            styled = alerts_df.style.applymap(severity_badge, subset=["ALERT_SEVERITY"])
+            styled = filtered_df.style.applymap(severity_badge, subset=["ALERT_SEVERITY"])
             st.dataframe(styled, use_container_width=True, hide_index=True)
 
             # Drill into a specific alert
             selected_alert = st.selectbox(
                 "Drill into alert →",
-                options=[""] + list(alerts_df["ALERT_ID"]),
+                options=[""] + list(filtered_df["ALERT_ID"]),
                 format_func=lambda x: "Select an alert to investigate..." if x == "" else x,
             )
             if selected_alert:
@@ -144,7 +185,7 @@ def render_dashboard():
                         st.info("Switch to **Investigation Chat** in the sidebar →")
 
     # ── High-risk accounts ────────────────────────────────────
-    with right_col:
+    with right_col, st.container(border=True):
         st.subheader("⚠️ High-Risk Accounts")
         hr_df = run_query("""
             SELECT
@@ -162,43 +203,69 @@ def render_dashboard():
             LIMIT 15
         """)
         if not hr_df.empty:
-            st.dataframe(hr_df, use_container_width=True, hide_index=True)
+            display_df = hr_df.copy()
+            display_df["PEP_FLAG"] = display_df["PEP_FLAG"].map({True: "Yes", False: "No"})
+            display_df["SANCTIONS_FLAG"] = display_df["SANCTIONS_FLAG"].map({True: "Yes", False: "No"})
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
         else:
             st.info("No high-risk accounts found.")
 
     st.divider()
 
-    # ── Alert typology chart ──────────────────────────────────
-    st.subheader("📈 Alert Distribution by Typology")
-    typology_df = run_query("""
-        SELECT ALERT_TYPE, ALERT_SEVERITY, COUNT(*) AS CNT
-        FROM AML_ALERTS
-        GROUP BY 1, 2
-        ORDER BY CNT DESC
-    """)
-    if not typology_df.empty:
-        st.bar_chart(typology_df.set_index("ALERT_TYPE")["CNT"])
+    # ── Alert typology chart & recent cash transactions (side by side) ──
+    chart_col, cash_col = st.columns(2)
 
-    # ── Recent transactions heatmap ───────────────────────────
-    st.subheader("🔥 Recent High-Value Cash Transactions")
-    cash_df = run_query("""
-        SELECT
-            t.TRANSACTION_ID,
-            t.ACCOUNT_ID,
-            c.FULL_NAME AS CUSTOMER,
-            TO_CHAR(t.TRANSACTION_DATE, 'YYYY-MM-DD') AS DATE,
-            t.TRANSACTION_TYPE,
-            t.AMOUNT_INR,
-            t.IS_CASH
-        FROM TRANSACTIONS t
-        JOIN ACCOUNTS a ON t.ACCOUNT_ID = a.ACCOUNT_ID
-        JOIN CUSTOMERS c ON a.CUSTOMER_ID = c.CUSTOMER_ID
-        WHERE t.IS_CASH = TRUE
-          AND t.AMOUNT_INR >= 40000
-        ORDER BY t.TRANSACTION_DATE DESC
-        LIMIT 20
-    """)
-    if not cash_df.empty:
-        st.dataframe(cash_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No high-value cash transactions found.")
+    with chart_col, st.container(border=True):
+        st.subheader("📈 Alert Typology by Severity")
+        typology_df = run_query("""
+            SELECT ALERT_TYPE, ALERT_SEVERITY, COUNT(*) AS CNT
+            FROM AML_ALERTS
+            GROUP BY 1, 2
+            ORDER BY CNT DESC
+        """)
+        if not typology_df.empty:
+            chart = (
+                alt.Chart(typology_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X("CNT:Q", title="Alerts"),
+                    y=alt.Y("ALERT_TYPE:N", sort="-x", title=None),
+                    color=alt.Color(
+                        "ALERT_SEVERITY:N",
+                        title="Severity",
+                        scale=alt.Scale(
+                            domain=list(SEVERITY_COLORS.keys()),
+                            range=list(SEVERITY_COLORS.values()),
+                        ),
+                    ),
+                    tooltip=["ALERT_TYPE", "ALERT_SEVERITY", "CNT"],
+                )
+                .properties(height=280)
+            )
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("No alerts to chart yet.")
+
+    with cash_col, st.container(border=True):
+        st.subheader("🔥 Recent High-Value Cash Transactions")
+        cash_df = run_query("""
+            SELECT
+                t.TRANSACTION_ID,
+                t.ACCOUNT_ID,
+                c.FULL_NAME AS CUSTOMER,
+                TO_CHAR(t.TRANSACTION_DATE, 'YYYY-MM-DD') AS DATE,
+                t.TRANSACTION_TYPE,
+                t.AMOUNT_INR,
+                t.IS_CASH
+            FROM TRANSACTIONS t
+            JOIN ACCOUNTS a ON t.ACCOUNT_ID = a.ACCOUNT_ID
+            JOIN CUSTOMERS c ON a.CUSTOMER_ID = c.CUSTOMER_ID
+            WHERE t.IS_CASH = TRUE
+              AND t.AMOUNT_INR >= 40000
+            ORDER BY t.TRANSACTION_DATE DESC
+            LIMIT 20
+        """)
+        if not cash_df.empty:
+            st.dataframe(cash_df, use_container_width=True, hide_index=True, height=280)
+        else:
+            st.info("No high-value cash transactions found.")

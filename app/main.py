@@ -190,14 +190,47 @@ st.markdown("""
     .badge-low      { background: var(--sr-low); }
 
     /* ── Cards / metrics ─────────────────────────────────── */
+    @keyframes sr-fade-up {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
     .metric-card {
         background: #FFFFFF;
         border: 1px solid var(--sr-border);
         border-left: 4px solid var(--sr-green-600);
         border-radius: 10px;
-        padding: 1.1rem;
-        text-align: center;
+        padding: 1rem 1.15rem;
         box-shadow: 0 2px 10px rgba(11,46,34,0.05);
+        animation: sr-fade-up 0.35s ease both;
+        transition: box-shadow 0.2s ease, transform 0.2s ease;
+    }
+    .metric-card:hover {
+        box-shadow: 0 6px 18px rgba(11,46,34,0.10);
+        transform: translateY(-1px);
+    }
+    .metric-card.critical { border-left-color: var(--sr-critical); }
+    .metric-card.high     { border-left-color: var(--sr-high); }
+    .metric-card.medium   { border-left-color: var(--sr-medium); }
+    .metric-card-label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--sr-muted);
+        font-weight: 600;
+    }
+    .metric-card-value {
+        font-family: 'Playfair Display', Georgia, serif;
+        font-size: 2.1rem;
+        font-weight: 600;
+        color: var(--sr-green-900);
+        line-height: 1.2;
+        margin-top: 0.15rem;
+    }
+    .metric-card.critical .metric-card-value { color: var(--sr-critical); }
+    .metric-card-sub {
+        font-size: 0.78rem;
+        color: var(--sr-muted);
+        margin-top: 0.3rem;
     }
     [data-testid="stMetric"] {
         background: #FFFFFF;
@@ -212,6 +245,60 @@ st.markdown("""
         font-family: 'Playfair Display', Georgia, serif;
     }
     [data-testid="stMetricLabel"] { color: var(--sr-muted); }
+
+    /* ── Step ribbon (SAR Generator orientation chips) ────── */
+    .sr-step-ribbon { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.25rem; }
+    .sr-step-chip {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: #FFFFFF;
+        border: 1px solid var(--sr-border);
+        border-radius: 10px;
+        padding: 0.55rem 0.9rem;
+        flex: 1;
+        min-width: 180px;
+    }
+    .sr-step-chip .sr-step-num {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--sr-green-700);
+        color: #FFFFFF;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.8rem;
+        font-weight: 600;
+        flex-shrink: 0;
+    }
+    .sr-step-chip .sr-step-label {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--sr-green-900);
+    }
+
+    /* ── Official document preview panel ─────────────────── */
+    .sr-doc-panel {
+        position: relative;
+        background: #FFFFFF;
+        border: 1px solid var(--sr-border);
+        border-top: 3px solid var(--sr-gold);
+        border-radius: 10px;
+        padding: 1.75rem 2rem;
+        box-shadow: 0 4px 16px rgba(11,46,34,0.06);
+    }
+    .sr-doc-hash {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.78rem;
+        color: var(--sr-muted);
+        background: var(--sr-cream);
+        border: 1px solid var(--sr-border);
+        border-radius: 8px;
+        padding: 0.6rem 0.9rem;
+        word-break: break-all;
+    }
 
     /* ── Buttons ──────────────────────────────────────────
        Default (secondary) buttons = outlined pill chips,
@@ -252,6 +339,10 @@ st.markdown("""
         border-radius: 12px;
         box-shadow: 0 1px 8px rgba(11,46,34,0.05);
         padding: 0.25rem 0.5rem;
+        animation: sr-fade-up 0.3s ease both;
+    }
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        animation: sr-fade-up 0.3s ease both;
     }
     [data-testid="stChatInput"] textarea {
         border-radius: 10px !important;

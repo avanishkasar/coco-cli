@@ -28,6 +28,13 @@ def render_investigation():
     </div>
     """, unsafe_allow_html=True)
 
+    st.markdown("""
+    <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-bottom:1.1rem;">
+        <span class="badge-medium">🧠 Cortex Analyst · Text-to-SQL</span>
+        <span class="badge-low">🔒 Runs natively inside Snowflake</span>
+    </div>
+    """, unsafe_allow_html=True)
+
     # ── Session state ─────────────────────────────────────────
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
@@ -36,11 +43,12 @@ def render_investigation():
 
     # ── Suggested prompts ─────────────────────────────────────
     if not st.session_state.chat_history:
-        st.markdown("#### 💡 Try asking:")
-        cols = st.columns(2)
-        for i, q in enumerate(SUGGESTED_QUESTIONS):
-            if cols[i % 2].button(q, key=f"suggest_{i}", use_container_width=True):
-                st.session_state.pending_prompt = q
+        with st.container(border=True):
+            st.markdown("#### 💡 Try asking")
+            cols = st.columns(2)
+            for i, q in enumerate(SUGGESTED_QUESTIONS):
+                if cols[i % 2].button(q, key=f"suggest_{i}", use_container_width=True):
+                    st.session_state.pending_prompt = q
 
     # ── Render existing chat history ──────────────────────────
     for msg in st.session_state.chat_history:
@@ -105,13 +113,14 @@ def render_investigation():
         st.session_state.chat_history.append(assistant_msg)
 
     # ── Controls ──────────────────────────────────────────────
-    col1, col2, col3 = st.columns([2, 2, 6])
-    with col1:
-        if st.button("🗑️ Clear Chat", use_container_width=True):
-            st.session_state.chat_history = []
-            st.rerun()
-    with col2:
-        if st.session_state.last_full_response:
-            if st.button("📋 Send to SAR Generator", use_container_width=True):
-                st.session_state["sar_prefill"] = st.session_state.last_full_response
-                st.info("Evidence saved. Navigate to **SAR Generator** in the sidebar.")
+    with st.container(border=True):
+        col1, col2, col3 = st.columns([2, 2, 6])
+        with col1:
+            if st.button("🗑️ Clear Chat", use_container_width=True):
+                st.session_state.chat_history = []
+                st.rerun()
+        with col2:
+            if st.session_state.last_full_response:
+                if st.button("📋 Send to SAR Generator", use_container_width=True):
+                    st.session_state["sar_prefill"] = st.session_state.last_full_response
+                    st.info("Evidence saved. Navigate to **SAR Generator** in the sidebar.")

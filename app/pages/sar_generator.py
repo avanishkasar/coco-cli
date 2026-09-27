@@ -3,6 +3,7 @@ SAR Generator Page — SentinelReg
 Generates audit-ready Suspicious Activity Reports from AML alerts.
 """
 
+import hashlib
 import os
 from datetime import datetime
 import streamlit as st
@@ -44,6 +45,14 @@ def render_sar_generator():
         "**Investigation Chat** page. The generated SAR follows the FIU-IND / FinCEN format."
     )
 
+    st.markdown("""
+    <div class="sr-step-ribbon">
+        <div class="sr-step-chip"><span class="sr-step-num">1</span><span class="sr-step-label">Select Alert</span></div>
+        <div class="sr-step-chip"><span class="sr-step-num">2</span><span class="sr-step-label">Case Details</span></div>
+        <div class="sr-step-chip"><span class="sr-step-num">3</span><span class="sr-step-label">Generate &amp; Export</span></div>
+    </div>
+    """, unsafe_allow_html=True)
+
     # ── Alert selector ────────────────────────────────────────
     st.subheader("1️⃣ Select Alert")
     alerts_df = query("""
@@ -83,27 +92,31 @@ def render_sar_generator():
         ORDER BY TRANSACTION_DATE DESC LIMIT 20
     """)
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("**Alert Summary**")
-        st.table({
-            "Alert ID":   [alert["ALERT_ID"]],
-            "Type":       [alert["ALERT_TYPE"]],
-            "Severity":   [alert["ALERT_SEVERITY"]],
-            "Date":       [alert["ALERT_DATE"]],
-            "Amount INR": [f"₹{alert['TOTAL_AMOUNT_INR']:,}"],
-        })
-    with col_b:
-        if customer_df is not None and not customer_df.empty:
-            c = customer_df.iloc[0]
-            st.markdown("**Subject Customer**")
+    with st.container(border=True):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("**Alert Summary**")
             st.table({
-                "Name":      [c["FULL_NAME"]],
-                "Entity":    [c["ENTITY_TYPE"]],
-                "KYC Tier":  [c["KYC_TIER"]],
-                "PEP":       ["Yes" if c["PEP_FLAG"] else "No"],
-                "Sanctions": ["Yes" if c["SANCTIONS_FLAG"] else "No"],
+                "Alert ID":   [alert["ALERT_ID"]],
+                "Type":       [alert["ALERT_TYPE"]],
+                "Severity":   [alert["ALERT_SEVERITY"]],
+                "Date":       [alert["ALERT_DATE"]],
+                "Amount INR": [f"₹{alert['TOTAL_AMOUNT_INR']:,}"],
             })
+        with col_b:
+            if customer_df is not None and not customer_df.empty:
+                c = customer_df.iloc[0]
+                st.markdown("**Subject Customer**")
+                st.table({
+                    "Name":      [c["FULL_NAME"]],
+                    "Entity":    [c["ENTITY_TYPE"]],
+                    "KYC Tier":  [c["KYC_TIER"]],
+                    "PEP":       ["Yes" if c["PEP_FLAG"] else "No"],
+                    "Sanctions": ["Yes" if c["SANCTIONS_FLAG"] else "No"],
+                })
+
+        txn_count = len(txn_df) if txn_df is not None else 0
+        st.caption(f"📎 {txn_count} supporting transaction(s) retrieved for this dossier.")
 
     # ── SAR metadata form ─────────────────────────────────────
     st.subheader("2️⃣ SAR Details")
@@ -147,11 +160,17 @@ def render_sar_generator():
 
             sar_markdown = build_sar_markdown(sar_data)
             sar_text     = build_sar_text(sar_data)
+            doc_hash     = hashlib.sha256(sar_text.encode("utf-8")).hexdigest()
 
         st.success("✅ SAR generated successfully.")
         st.divider()
         st.markdown("### 📄 SAR Preview")
-        st.markdown(sar_markdown, unsafe_allow_html=False)
+        with st.container(border=True):
+            st.markdown(sar_markdown, unsafe_allow_html=False)
+        st.markdown(
+            f'<div class="sr-doc-hash">🔐 Document Integrity Hash (SHA-256): {doc_hash}</div>',
+            unsafe_allow_html=True,
+        )
 
         st.divider()
         col1, col2 = st.columns(2)
