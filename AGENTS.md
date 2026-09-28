@@ -12,8 +12,8 @@ It combines:
 - **Cortex Analyst** — natural-language → SQL over `TRANSACTIONS`, `ACCOUNTS`, `AML_ALERTS`,
   `ML_RISK_FEATURES`, and `REGULATORY_DOCS_CHUNKS` (chunked RBI / FATF / Basel / FinCEN text,
   queried via SQL/ILIKE rather than Cortex Search — see below)
-- **Cortex Agent** — orchestrates the Analyst tool behind one conversational endpoint
-- **Snowflake ML (Snowpark ML)** — XGBoost fraud classifier producing `COMPUTED_RISK_SCORE`
+- **Snowflake ML (Snowpark ML)** — gradient-boosted fraud classifier producing `COMPUTED_RISK_SCORE`,
+  surfaced live in the Risk Dashboard against the rule-based `RISK_SCORE`
 - **Streamlit** — investigation chat, risk command center, SAR generator UI
 
 > Cortex Search is intentionally not used: it depends on `EMBED_TEXT_768`, which is
@@ -24,18 +24,18 @@ It combines:
 
 | Path | Purpose |
 |---|---|
-| `setup/01-05_*.sql` | Run in order to provision DB, tables, synthetic data, Cortex Search, Cortex Agent |
+| `setup/01-04_*.sql` | Run in order to provision DB, tables, synthetic data, regulatory chunks. `05_create_agent.sql` is optional — the app calls Cortex Analyst directly and doesn't need it. |
 | `semantic_model/aml_risk_model.yaml` | Cortex Analyst semantic model |
 | `regulatory_docs/*.md` | Source regulatory text (chunked into `REGULATORY_DOCS_CHUNKS` by `setup/04_cortex_search.sql`) |
 | `ml_pipeline/fraud_classifier.py` | Trains/scores the Snowpark ML fraud classifier |
-| `app/` | Streamlit application (`main.py`, `pages/`, `utils/`) |
+| `app/` | Streamlit application (`main.py`, `views/`, `utils/`). The page modules live in `app/views/`, not `app/pages/` — Streamlit reserves the `pages/` directory name for its own auto-discovery, which collides with the explicit `st.navigation`/`st.Page` routing this app uses in `main.py`. |
 | `.coco/skills/` | CoCo CLI Agent Skills scoped to this project |
 
 ## Conventions
 
 - All Snowflake object names are UPPER_SNAKE_CASE; Python is standard PEP8.
 - SQL setup scripts are idempotent (`CREATE OR REPLACE`) and must stay runnable end-to-end
-  in order 01 → 05 against a fresh account.
+  in order 01 → 04 against a fresh account (05 is optional, see above).
 - Never commit real credentials — only `.env.example` is tracked; `.env` is gitignored.
 - When adding a new fraud typology, update in this order: `setup/02_create_tables.sql`
   (if new columns needed) → `setup/03_load_synthetic_data.sql` (scenario data) →
@@ -48,7 +48,8 @@ It combines:
 ## Common tasks
 
 - **Provision the Snowflake backend:** run `setup/01_setup_db.sql` through
-  `setup/05_create_agent.sql` in order via `coco run` or `snowsql -f`.
+  `setup/04_cortex_search.sql` in order via `coco run` or `snowsql -f`
+  (`05_create_agent.sql` is optional, see above).
 - **Run the app locally:** `pip install -r requirements.txt && streamlit run app/main.py`
   from the repo root (or `app/` — see README Quick Start).
 - **Retrain the fraud classifier:** `python ml_pipeline/fraud_classifier.py`.

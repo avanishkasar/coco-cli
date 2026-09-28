@@ -415,9 +415,9 @@ with st.sidebar:
     st.markdown('<div class="sr-chip-label" style="margin-top:0;">Core Modules</div>', unsafe_allow_html=True)
 
 # ── Page routing via native Streamlit navigation ──────────────
-from pages.investigation import render_investigation
-from pages.risk_dashboard import render_dashboard
-from pages.sar_generator import render_sar_generator
+from views.investigation import render_investigation
+from views.risk_dashboard import render_dashboard
+from views.sar_generator import render_sar_generator
 
 pg = st.navigation(
     [

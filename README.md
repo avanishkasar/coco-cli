@@ -34,27 +34,33 @@ The system moves a compliance analyst from a raw alert all the way to a document
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    SentinelReg                          │
-│         Streamlit UI (Multi-tab Dashboard)              │
+│      Streamlit UI (Investigation / Dashboard / SAR)     │
 └──────────────────────┬──────────────────────────────────┘
                        │
               ┌────────▼────────┐
-              │  Cortex Agent   │  ← Natural language orchestrator
-              │  (REST API)     │
-              └────────┬────────┘
+              │ Cortex Analyst  │  ← Text-to-SQL, called directly via
+              │  (REST API)     │    the /api/v2/cortex/analyst/message
+              └────────┬────────┘    endpoint (no Cortex Agent hop —
+                       │              that's blocked on trial accounts)
           ┌────────────┼───────────────┐
           ▼            ▼               ▼
   ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐
-  │ Cortex       │ │ Cortex       │ │ Snowflake ML     │
-  │ Analyst      │ │ Search       │ │ Risk Scorer      │
-  │ (Text→SQL)   │ │ (Policy RAG) │ │ (Classification) │
-  └──────┬───────┘ └──────┬───────┘ └──────┬───────────┘
-         │                │                 │
-  ┌──────▼───────┐ ┌──────▼───────┐ ┌──────▼───────────┐
-  │ Transactions │ │ RBI AML PDFs │ │ ML Feature       │
-  │ Accounts     │ │ Basel Docs   │ │ Store            │
-  │ Alerts Table │ │ FinCEN BSA   │ │                  │
-  └──────────────┘ └──────────────┘ └──────────────────┘
+  │ Transactions │ │ Regulatory   │ │ Snowflake ML     │
+  │ Accounts     │ │ Docs Chunks  │ │ Risk Scorer      │
+  │ Alerts       │ │ (RBI/FATF/   │ │ (Gradient        │
+  │              │ │ Basel/FinCEN)│ │ Boosting)        │
+  └──────────────┘ └──────────────┘ └──────┬───────────┘
+                                             │
+                                     ┌───────▼──────────┐
+                                     │ ML_RISK_FEATURES │
+                                     │ (COMPUTED_RISK_  │
+                                     │  SCORE)          │
+                                     └───────────────────┘
 ```
+
+Both the transactional/risk tables and the regulatory text chunks live in the
+same Cortex Analyst semantic model (`semantic_model/aml_risk_model.yaml`), so
+one Text-to-SQL call can answer either kind of question.
 
 ---
 
@@ -72,7 +78,7 @@ coco-cli/
 │   ├── 02_create_tables.sql      # AML transactions, accounts, alerts, ML features
 │   ├── 03_load_synthetic_data.sql# Synthetic AML scenario data (6 fraud typologies)
 │   ├── 04_cortex_search.sql      # Regulatory doc chunks (Cortex Search commented out — needs paid account)
-│   └── 05_create_agent.sql       # Cortex Agent definition (Analyst + Search tools)
+│   └── 05_create_agent.sql       # Optional: Cortex Agent object (not used by the app — see note below)
 ├── semantic_model/
 │   └── aml_risk_model.yaml       # Cortex Analyst semantic model
 ├── regulatory_docs/               # Human-readable source of the chunks in 04_cortex_search.sql
@@ -82,12 +88,13 @@ coco-cli/
 │   └── fraud_classifier.py       # Snowpark ML fraud classifier (train/score/explain)
 ├── app/                           # Streamlit application
 │   ├── main.py                   # Entry point, theming, navigation
-│   ├── pages/
-│   │   ├── investigation.py      # Natural-language investigation chat (Cortex Agent)
+│   ├── views/                    # (named views/, not pages/ — see AGENTS.md)
+│   │   ├── investigation.py      # Natural-language investigation chat (Cortex Analyst)
 │   │   ├── risk_dashboard.py     # Risk command center
 │   │   └── sar_generator.py      # SAR/STR report generation
 │   └── utils/
-│       ├── agent_client.py       # Cortex Agent REST API wrapper (SSE streaming)
+│       ├── agent_client.py       # Cortex Analyst REST API wrapper
+│       ├── db.py                 # Shared Snowpark session + query helper
 │       ├── sar_builder.py        # SAR document template engine
 │       └── risk_signals.py       # Rule-based fraud pattern detectors
 ├── LICENSE
@@ -118,9 +125,11 @@ cd coco-cli
 cp .env.example .env
 # Edit .env with your Snowflake credentials (see "Credentials You'll Need" below)
 
-# 3. Provision the Snowflake backend — run in order.
+# 3. Provision the Snowflake backend — run 01 through 04 in order
+#    (05_create_agent.sql is optional — the app talks to Cortex Analyst
+#    directly and doesn't need the Cortex Agent object it creates).
 #    Easiest via CoCo CLI, which picks up AGENTS.md and can run these for you:
-coco run "execute setup/01_setup_db.sql through setup/05_create_agent.sql in order against my Snowflake account"
+coco run "execute setup/01_setup_db.sql through setup/04_cortex_search.sql in order against my Snowflake account"
 
 #    ...or directly with SnowSQL:
 snowsql -f setup/01_setup_db.sql
@@ -128,7 +137,6 @@ snowsql -f setup/02_create_tables.sql
 snowsql -f setup/03_load_synthetic_data.sql
 snowsql -q "PUT file://semantic_model/aml_risk_model.yaml @sentinel_reg.data.models AUTO_COMPRESS=false;"
 snowsql -f setup/04_cortex_search.sql
-snowsql -f setup/05_create_agent.sql
 
 # 4. (Optional) Train the ML fraud classifier
 pip install -r requirements.txt
@@ -180,8 +188,7 @@ can also be explained live in the UI:
 
 ## Built With
 
-- **Snowflake Cortex Agents** — Multi-tool AI agent orchestration
-- **Snowflake Cortex Analyst** — Natural language to SQL on transaction data
+- **Snowflake Cortex Analyst** — Natural language to SQL, called directly via its REST API (over both transactional/risk tables and regulatory text)
 - **Snowflake Cortex Search** — supported by the architecture but disabled by default (needs `EMBED_TEXT_768`, unavailable on trial accounts); regulatory Q&A runs through Cortex Analyst/SQL instead
 - **Snowflake ML** — Supervised fraud classification (XGBoost via Snowpark)
 - **Snowflake CoCo CLI** — Agentic workflow automation and skills
@@ -208,11 +215,11 @@ is required.** You need:
 | Variable | Where to get it |
 |---|---|
 | `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD` | Your Snowflake account (trial or GCC-provided account works). `ACCOUNTADMIN` needed once, to run `setup/01_setup_db.sql`. |
-| `SENTINEL_REG_PAT` | A Snowflake [Personal Access Token](https://docs.snowflake.com/en/user-guide/security-access-control-authenticate-personal-access-token) scoped to `SENTINEL_REG_ROLE`, used by `app/utils/agent_client.py` to call the Cortex Agent REST API. |
+| `SENTINEL_REG_PAT` | A Snowflake [Personal Access Token](https://docs.snowflake.com/en/user-guide/security-access-control-authenticate-personal-access-token) scoped to `SENTINEL_REG_ROLE`, used by `app/utils/agent_client.py` to call the Cortex Analyst REST API. Requires a network policy to be set on your account/user, or PAT auth returns 401. |
 | `SENTINEL_REG_HOST` | Your account's Snowflake hostname, e.g. `xy12345.snowflakecomputing.com`. |
 | CoCo CLI auth | Run `coco auth login` (or your org's SSO flow) against the same account so `.coco/skills/` and `AGENTS.md` are usable from the CLI. |
 
-Cortex AI (Cortex Analyst, Cortex Agents) must be **enabled on the account/region** —
+Cortex AI (specifically Cortex Analyst) must be **enabled on the account/region** —
 this is on by default for most trial and Snowflake-provisioned accounts. Cortex
 Search specifically requires `EMBED_TEXT_768`, which trial accounts don't have
 access to; this project routes regulatory Q&A through Cortex Analyst/SQL instead
@@ -225,7 +232,7 @@ access to; this project routes regulatory Q&A through Cortex Analyst/SQL instead
 | Criterion | How SentinelReg addresses it |
 |---|---|
 | **Real-World Relevance** | Targets an actual, high-stakes GCC workflow — AML/fraud investigation and SAR/STR filing — with citations traceable to real RBI, FATF, Basel and FinCEN text, and filing deadlines computed from real regulatory timelines (7 days FIU-IND, 30/60 days FinCEN). |
-| **Technical Execution** | Combines Cortex Analyst (text-to-SQL over both transactional and regulatory data), a Snowpark ML classifier, and Cortex Agent orchestration — plus CoCo CLI Agent Skills (`.coco/skills/`) and an `AGENTS.md` so the CLI itself is a first-class way to operate the system, not just the web UI. |
+| **Technical Execution** | Combines Cortex Analyst (text-to-SQL over both transactional and regulatory data), a Snowpark ML classifier surfaced live in the dashboard, and real-time UI features (auto-refresh, deterministic regulatory search) — plus CoCo CLI Agent Skills (`.coco/skills/`) and an `AGENTS.md` so the CLI itself is a first-class way to operate the system, not just the web UI. |
 | **Solution Completeness** | End-to-end: seeded multi-typology synthetic data → detection (rule-based *and* ML) → natural-language investigation → evidence-backed, regulator-ready SAR generation → dashboard for portfolio-level triage — runnable from a clean Snowflake account with five idempotent setup scripts. |
 
 ---
