@@ -15,31 +15,32 @@ from typing import Generator
 
 import requests
 from dotenv import load_dotenv
-from snowflake.snowpark import Session
+
+from utils.db import get_snowflake_session
 
 load_dotenv()
 
-PAT    = os.getenv("SENTINEL_REG_PAT")
-HOST   = os.getenv("SENTINEL_REG_HOST")
-DB     = os.getenv("SNOWFLAKE_DATABASE", "SENTINEL_REG")
-SCHEMA = os.getenv("SNOWFLAKE_SCHEMA", "DATA")
 
-ANALYST_URL = f"https://{HOST}/api/v2/cortex/analyst/message"
-SEMANTIC_MODEL_FILE = f"@{DB.lower()}.{SCHEMA.lower()}.models/aml_risk_model.yaml"
-
-
-def _get_session() -> Session:
-    return Session.builder.configs(
-        {
-            "account": os.getenv("SNOWFLAKE_ACCOUNT"),
-            "user": os.getenv("SNOWFLAKE_USER"),
-            "password": os.getenv("SNOWFLAKE_PASSWORD"),
-            "role": os.getenv("SNOWFLAKE_ROLE", "SENTINEL_REG_ROLE"),
-            "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE", "SENTINEL_REG_WH"),
-            "database": DB,
-            "schema": SCHEMA,
-        }
-    ).create()
+def _config() -> dict:
+    """
+    Reads connection config fresh on every call rather than caching it at
+    module-import time. On Streamlit Cloud, secrets can be injected into
+    the environment after this module is first imported (or updated later
+    without a full cold restart); caching these as module-level constants
+    meant a stale/empty PAT could get baked in for the life of the running
+    process, causing every request to silently send "Bearer None".
+    """
+    db = os.getenv("SNOWFLAKE_DATABASE", "SENTINEL_REG")
+    schema = os.getenv("SNOWFLAKE_SCHEMA", "DATA")
+    host = os.getenv("SENTINEL_REG_HOST")
+    return {
+        "pat": os.getenv("SENTINEL_REG_PAT"),
+        "host": host,
+        "db": db,
+        "schema": schema,
+        "analyst_url": f"https://{host}/api/v2/cortex/analyst/message",
+        "semantic_model_file": f"@{db.lower()}.{schema.lower()}.models/aml_risk_model.yaml",
+    }
 
 
 def build_message(role: str, text: str) -> dict:
@@ -54,17 +55,30 @@ def stream_agent_response(
         { "type": str, "data": any }
     Types: text | sql | table | error | done
     """
+    cfg = _config()
+
+    if not cfg["pat"] or not cfg["host"]:
+        yield {
+            "type": "error",
+            "data": (
+                "SENTINEL_REG_PAT or SENTINEL_REG_HOST is not set in this environment. "
+                "Check your .env (local) or app secrets (Streamlit Cloud: Settings → Secrets)."
+            ),
+        }
+        yield {"type": "done", "data": None}
+        return
+
     payload = {
         "messages": conversation_history,
-        "semantic_model_file": SEMANTIC_MODEL_FILE,
+        "semantic_model_file": cfg["semantic_model_file"],
     }
 
     try:
         resp = requests.post(
-            ANALYST_URL,
+            cfg["analyst_url"],
             json=payload,
             headers={
-                "Authorization": f"Bearer {PAT}",
+                "Authorization": f"Bearer {cfg['pat']}",
                 "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
@@ -99,7 +113,7 @@ def stream_agent_response(
 
     if sql_statement:
         try:
-            session = _get_session()
+            session = get_snowflake_session()
             df = session.sql(sql_statement).to_pandas()
             yield {"type": "table", "data": df}
         except Exception as exc:
