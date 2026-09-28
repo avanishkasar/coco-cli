@@ -184,6 +184,18 @@ st.markdown("""
         background: rgba(255,255,255,0.85);
         flex-shrink: 0;
     }
+    @keyframes sr-pulse {
+        0%   { box-shadow: 0 0 0 0 rgba(186,26,26,0.55); }
+        70%  { box-shadow: 0 0 0 6px rgba(186,26,26,0); }
+        100% { box-shadow: 0 0 0 0 rgba(186,26,26,0); }
+    }
+    @keyframes sr-pulse-card {
+        0%   { box-shadow: 0 2px 10px rgba(11,46,34,0.05), 0 0 0 0 rgba(186,26,26,0.35); }
+        70%  { box-shadow: 0 2px 10px rgba(11,46,34,0.05), 0 0 0 8px rgba(186,26,26,0); }
+        100% { box-shadow: 0 2px 10px rgba(11,46,34,0.05), 0 0 0 0 rgba(186,26,26,0); }
+    }
+    .badge-critical::before { animation: sr-pulse 1.8s ease-out infinite; }
+    .metric-card.critical { animation: sr-fade-up 0.35s ease both, sr-pulse-card 2.6s ease-out infinite; }
     .badge-critical { background: var(--sr-critical); }
     .badge-high     { background: var(--sr-high); }
     .badge-medium   { background: var(--sr-medium); }

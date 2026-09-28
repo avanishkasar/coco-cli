@@ -3,11 +3,10 @@ Risk Dashboard Page — SentinelReg
 Live command center view of AML risk signals, alert queues, and account risk distribution.
 """
 
-import os
 import streamlit as st
 import pandas as pd
 import altair as alt
-from snowflake.snowpark import Session
+from utils.db import run_query
 
 SEVERITY_COLORS = {
     "CRITICAL": "#BA1A1A",
@@ -15,28 +14,6 @@ SEVERITY_COLORS = {
     "MEDIUM": "#147C5B",
     "LOW": "#6B7280",
 }
-
-
-@st.cache_resource
-def get_snowflake_session() -> Session:
-    return Session.builder.configs({
-        "account":   os.getenv("SNOWFLAKE_ACCOUNT"),
-        "user":      os.getenv("SNOWFLAKE_USER"),
-        "password":  os.getenv("SNOWFLAKE_PASSWORD"),
-        "role":      os.getenv("SNOWFLAKE_ROLE",      "SENTINEL_REG_ROLE"),
-        "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE",  "SENTINEL_REG_WH"),
-        "database":  os.getenv("SNOWFLAKE_DATABASE",   "SENTINEL_REG"),
-        "schema":    os.getenv("SNOWFLAKE_SCHEMA",     "DATA"),
-    }).create()
-
-
-def run_query(sql: str) -> pd.DataFrame:
-    try:
-        session = get_snowflake_session()
-        return session.sql(sql).to_pandas()
-    except Exception as exc:
-        st.error(f"Query error: {exc}")
-        return pd.DataFrame()
 
 
 def render_dashboard():
@@ -47,44 +24,48 @@ def render_dashboard():
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("*Auto-refreshes every 5 minutes. Data sourced from SENTINEL_REG.DATA.*")
+    st.caption("🔄 Live — this row re-queries Snowflake automatically every 5 minutes.")
 
-    # ── Top KPI metrics ───────────────────────────────────────
-    m1, m2, m3, m4 = st.columns(4)
+    # ── Top KPI metrics (real auto-refresh via st.fragment) ────
+    @st.fragment(run_every="5m")
+    def _kpi_row():
+        m1, m2, m3, m4 = st.columns(4)
 
-    open_alerts_df = run_query("""
-        SELECT COUNT(*) AS CNT FROM AML_ALERTS
-        WHERE ALERT_STATUS IN ('OPEN', 'UNDER_REVIEW', 'ESCALATED')
-    """)
-    critical_df = run_query("""
-        SELECT COUNT(*) AS CNT FROM AML_ALERTS
-        WHERE ALERT_SEVERITY = 'CRITICAL' AND ALERT_STATUS != 'CLOSED_FALSE_POSITIVE'
-    """)
-    high_risk_df = run_query("""
-        SELECT COUNT(*) AS CNT FROM ACCOUNTS WHERE RISK_SCORE > 0.7
-    """)
-    sar_pending_df = run_query("""
-        SELECT COUNT(*) AS CNT FROM AML_ALERTS
-        WHERE ALERT_STATUS = 'ESCALATED' AND SAR_FILED = FALSE
-    """)
+        open_alerts_df = run_query("""
+            SELECT COUNT(*) AS CNT FROM AML_ALERTS
+            WHERE ALERT_STATUS IN ('OPEN', 'UNDER_REVIEW', 'ESCALATED')
+        """)
+        critical_df = run_query("""
+            SELECT COUNT(*) AS CNT FROM AML_ALERTS
+            WHERE ALERT_SEVERITY = 'CRITICAL' AND ALERT_STATUS != 'CLOSED_FALSE_POSITIVE'
+        """)
+        high_risk_df = run_query("""
+            SELECT COUNT(*) AS CNT FROM ACCOUNTS WHERE RISK_SCORE > 0.7
+        """)
+        sar_pending_df = run_query("""
+            SELECT COUNT(*) AS CNT FROM AML_ALERTS
+            WHERE ALERT_STATUS = 'ESCALATED' AND SAR_FILED = FALSE
+        """)
 
-    def safe_count(df):
-        return int(df.iloc[0, 0]) if not df.empty else 0
+        def safe_count(df):
+            return int(df.iloc[0, 0]) if not df.empty else 0
 
-    def metric_card(col, css_class, label, value, sub):
-        with col:
-            st.markdown(f"""
-            <div class="metric-card {css_class}">
-                <div class="metric-card-label">{label}</div>
-                <div class="metric-card-value">{value}</div>
-                <div class="metric-card-sub">{sub}</div>
-            </div>
-            """, unsafe_allow_html=True)
+        def metric_card(col, css_class, label, value, sub):
+            with col:
+                st.markdown(f"""
+                <div class="metric-card {css_class}">
+                    <div class="metric-card-label">{label}</div>
+                    <div class="metric-card-value">{value}</div>
+                    <div class="metric-card-sub">{sub}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-    metric_card(m1, "", "🚨 Open Alerts", safe_count(open_alerts_df), "Awaiting analyst triage")
-    metric_card(m2, "critical", "🔴 Critical", safe_count(critical_df), "Immediate escalation required")
-    metric_card(m3, "high", "⚠️ High-Risk Accounts", safe_count(high_risk_df), "Risk score above 0.70")
-    metric_card(m4, "medium", "📋 SAR Pending", safe_count(sar_pending_df), "Escalated, not yet filed")
+        metric_card(m1, "", "🚨 Open Alerts", safe_count(open_alerts_df), "Awaiting analyst triage")
+        metric_card(m2, "critical", "🔴 Critical", safe_count(critical_df), "Immediate escalation required")
+        metric_card(m3, "high", "⚠️ High-Risk Accounts", safe_count(high_risk_df), "Risk score above 0.70")
+        metric_card(m4, "medium", "📋 SAR Pending", safe_count(sar_pending_df), "Escalated, not yet filed")
+
+    _kpi_row()
 
     st.divider()
 
@@ -269,3 +250,68 @@ def render_dashboard():
             st.dataframe(cash_df, use_container_width=True, hide_index=True, height=280)
         else:
             st.info("No high-value cash transactions found.")
+
+    st.divider()
+
+    # ── ML risk model explainability ──────────────────────────
+    with st.container(border=True):
+        st.subheader("🧬 ML Risk Model — Rule-Based vs. Computed Score")
+        st.caption(
+            "Compares the rule-based `RISK_SCORE` against the Snowpark ML classifier's "
+            "`COMPUTED_RISK_SCORE` (trained by `ml_pipeline/fraud_classifier.py`) for every "
+            "account with a feature snapshot. Large gaps flag accounts the rules alone would miss."
+        )
+
+        ml_df = run_query("""
+            SELECT
+                f.ACCOUNT_ID,
+                c.FULL_NAME                AS CUSTOMER,
+                ROUND(a.RISK_SCORE, 3)     AS RULE_BASED_SCORE,
+                ROUND(f.COMPUTED_RISK_SCORE, 3) AS ML_SCORE,
+                f.CASH_TXN_RATIO_30D,
+                f.JUST_BELOW_THRESHOLD_COUNT,
+                f.VELOCITY_SCORE,
+                f.UNIQUE_COUNTERPARTIES_30D,
+                f.ROUND_TRIP_DETECTED,
+                TO_CHAR(f.FEATURE_DATE, 'YYYY-MM-DD') AS FEATURE_DATE
+            FROM ML_RISK_FEATURES f
+            JOIN ACCOUNTS a  ON f.ACCOUNT_ID = a.ACCOUNT_ID
+            JOIN CUSTOMERS c ON a.CUSTOMER_ID = c.CUSTOMER_ID
+            ORDER BY f.COMPUTED_RISK_SCORE DESC
+        """)
+
+        if ml_df.empty:
+            st.info(
+                "No ML feature snapshots yet — run `python ml_pipeline/fraud_classifier.py "
+                "--mode score` to populate COMPUTED_RISK_SCORE."
+            )
+        else:
+            gauge_col, table_col = st.columns([2, 3])
+
+            with gauge_col:
+                diagonal = alt.Chart(
+                    pd.DataFrame({"x": [0, 1], "y": [0, 1]})
+                ).mark_line(strokeDash=[4, 4], color="#A9A48C").encode(x="x", y="y")
+
+                scatter = (
+                    alt.Chart(ml_df)
+                    .mark_circle(size=110, opacity=0.85)
+                    .encode(
+                        x=alt.X("RULE_BASED_SCORE:Q", title="Rule-based score", scale=alt.Scale(domain=[0, 1])),
+                        y=alt.Y("ML_SCORE:Q", title="ML computed score", scale=alt.Scale(domain=[0, 1])),
+                        color=alt.Color(
+                            "ML_SCORE:Q",
+                            title="ML score",
+                            scale=alt.Scale(scheme="redyellowgreen", reverse=True, domain=[0, 1]),
+                        ),
+                        tooltip=["ACCOUNT_ID", "CUSTOMER", "RULE_BASED_SCORE", "ML_SCORE"],
+                    )
+                    .properties(height=280)
+                )
+                st.altair_chart(diagonal + scatter, use_container_width=True)
+                st.caption("Points above the dashed line: the ML model rates the account riskier than the rules do.")
+
+            with table_col:
+                display_ml = ml_df.copy()
+                display_ml["ROUND_TRIP_DETECTED"] = display_ml["ROUND_TRIP_DETECTED"].map({True: "Yes", False: "No"})
+                st.dataframe(display_ml, use_container_width=True, hide_index=True, height=280)

@@ -5,6 +5,7 @@ Natural language AML investigation interface powered by Cortex Analyst.
 
 import streamlit as st
 from utils.agent_client import stream_agent_response, build_message
+from utils.db import run_query
 
 
 SUGGESTED_QUESTIONS = [
@@ -34,6 +35,40 @@ def render_investigation():
         <span class="badge-low">🔒 Runs natively inside Snowflake</span>
     </div>
     """, unsafe_allow_html=True)
+
+    # ── Regulatory citation search (deterministic, bypasses the LLM) ──
+    with st.expander("📚 Regulatory Reference Library — instant keyword lookup", expanded=False):
+        st.caption(
+            "Searches `REGULATORY_DOCS_CHUNKS` directly by keyword — no LLM in the loop, "
+            "so results are exact matches from the source text, useful when you need a "
+            "citation you can defend to an examiner without waiting on a model response."
+        )
+        reg_query = st.text_input(
+            "Keyword",
+            placeholder="e.g. structuring, SAR, PEP, layering, CTR…",
+            label_visibility="collapsed",
+            key="regulatory_search_term",
+        )
+        if reg_query:
+            safe_term = reg_query.replace("'", "''")
+            reg_results = run_query(f"""
+                SELECT DOC_NAME, DOC_TYPE, SECTION_NUMBER, SECTION_TITLE, CHUNK_TEXT, JURISDICTION
+                FROM REGULATORY_DOCS_CHUNKS
+                WHERE CHUNK_TEXT ILIKE '%{safe_term}%' OR SECTION_TITLE ILIKE '%{safe_term}%'
+                ORDER BY DOC_TYPE, SECTION_NUMBER
+            """)
+            if reg_results.empty:
+                st.info("No regulatory chunks matched that keyword.")
+            else:
+                st.caption(f"{len(reg_results)} matching clause(s):")
+                for _, row in reg_results.iterrows():
+                    st.markdown(f"""
+                    **{row['DOC_TYPE']} — {row['SECTION_NUMBER']}: {row['SECTION_TITLE']}**
+                    *({row['JURISDICTION']} · {row['DOC_NAME']})*
+
+                    {row['CHUNK_TEXT']}
+                    """)
+                    st.divider()
 
     # ── Session state ─────────────────────────────────────────
     if "chat_history" not in st.session_state:
