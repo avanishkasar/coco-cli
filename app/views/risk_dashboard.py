@@ -1,317 +1,338 @@
 """
-Risk Dashboard Page — SentinelReg
-Live command center view of AML risk signals, alert queues, and account risk distribution.
+Alert Triage Page (Risk Dashboard) — SentinelReg
+Human-in-the-loop alert queue, re-runnable detection engine, ML model
+comparison and transaction monitoring.
 """
 
-import streamlit as st
-import pandas as pd
 import altair as alt
-from utils.db import run_query
+import pandas as pd
+import streamlit as st
 
-SEVERITY_COLORS = {
-    "CRITICAL": "#BA1A1A",
-    "HIGH": "#A9790A",
-    "MEDIUM": "#147C5B",
-    "LOW": "#6B7280",
-}
+from utils import data, nav, ui
+from utils.risk_signals import RULE_CATALOGUE, run_all_detectors, signals_frame
+
+SEVERITY_COLORS = data.SEVERITY_COLORS
+SEVERITY_OPTIONS = ["All", "CRITICAL", "HIGH", "MEDIUM", "LOW"]
+
+
+def _reason_codes(row: dict) -> list[tuple[str, str, str]]:
+    """(label, detail, tone) reason codes from ML feature thresholds."""
+    out = []
+    if (row.get("JUST_BELOW_THRESHOLD_COUNT") or 0) >= 3:
+        out.append(("Structuring proxy", f"{int(row['JUST_BELOW_THRESHOLD_COUNT'])} txns just below ₹50k", "critical"))
+    if (row.get("VELOCITY_SCORE") or 0) >= 0.7:
+        out.append(("High velocity", f"score {row['VELOCITY_SCORE']:.2f}", "high"))
+    if (row.get("CASH_TXN_RATIO_30D") or 0) >= 0.7:
+        out.append(("Cash intensive", f"{row['CASH_TXN_RATIO_30D']:.0%} cash", "high"))
+    if row.get("ROUND_TRIP_DETECTED"):
+        out.append(("Round trip", "funds returned", "critical"))
+    if (row.get("GEOGRAPHIC_ANOMALY_SCORE") or 0) >= 0.5:
+        out.append(("Geographic anomaly", f"score {row['GEOGRAPHIC_ANOMALY_SCORE']:.2f}", "high"))
+    return out
+
+
+def _queue_tab(alerts: pd.DataFrame, as_of: pd.Timestamp):
+    if alerts.empty:
+        st.info("No alerts in AML_ALERTS.")
+        return
+
+    f1, f2, f3 = st.columns([1.6, 1.4, 1.6])
+    with f1:
+        sev = st.segmented_control("Severity", SEVERITY_OPTIONS, default="All", key="triage_sev")
+    with f2:
+        scope = st.segmented_control("Status", ["Active", "Closed", "All"], default="Active", key="triage_scope")
+    with f3:
+        search = st.text_input("Search", placeholder="Alert, customer, account or typology…", key="alert_search")
+
+    df = alerts.copy()
+    if scope == "Active":
+        df = df[df["ALERT_STATUS"].isin(data.ACTIVE_STATUSES)]
+    elif scope == "Closed":
+        df = df[df["ALERT_STATUS"].isin(data.CLOSED_STATUSES)]
+    if sev and sev != "All":
+        df = df[df["ALERT_SEVERITY"] == sev]
+    if search:
+        hay = df[["ALERT_ID", "CUSTOMER", "ACCOUNT_ID", "ALERT_TYPE", "CUSTOMER_ID"]].astype(str).agg(" ".join, axis=1)
+        df = df[hay.str.lower().str.contains(search.lower(), regex=False)]
+
+    clocks = [data.filing_clock(a, reference=as_of) for a in df.to_dict("records")]
+    view = pd.DataFrame({
+        "Alert": df["ALERT_ID"],
+        "Severity": df["ALERT_SEVERITY"],
+        "Typology": df["ALERT_TYPE"],
+        "Customer": df["CUSTOMER"],
+        "Account": df["ACCOUNT_ID"],
+        "Amount (₹)": df["TOTAL_AMOUNT_INR"],
+        "Status": df["ALERT_STATUS"].str.replace("_", " ").str.title(),
+        "Analyst": df["ANALYST_ASSIGNED"].fillna("— unassigned"),
+        "STR clock (days)": [c["days_left"] if c["state"] != "FILED" else None for c in clocks],
+        "Detected": df["ALERT_DATE"],
+    })
+    st.caption(f"Showing {len(view)} of {len(alerts)} alerts · filing clock measured against data as of {as_of:%d %b %Y %H:%M}; "
+               "negative = overdue")
+    st.dataframe(
+        view.style.map(lambda v: f"color:{SEVERITY_COLORS.get(v, '#16241E')};font-weight:700", subset=["Severity"]),
+        hide_index=True, width="stretch",
+        column_config={
+            "Amount (₹)": st.column_config.NumberColumn(format="%,.0f"),
+            "Detected": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm"),
+            "STR clock (days)": st.column_config.NumberColumn(help="Days left in the 7-day STR window (RBI-KYC-003)"),
+        },
+    )
+    if df.empty:
+        return
+
+    ids = list(df["ALERT_ID"])
+    preset = st.session_state.pop("triage_alert_id", None)
+    if preset in ids:
+        st.session_state["triage_case"] = preset
+    if st.session_state.get("triage_case") not in ids:
+        st.session_state["triage_case"] = ids[0]
+    labels = {r["ALERT_ID"]: f"{r['ALERT_ID']} — {r['ALERT_TYPE']} · {r['ALERT_SEVERITY']} · {r['CUSTOMER']}"
+              for r in df.to_dict("records")}
+    case_id = st.selectbox("Open case", ids, format_func=lambda x: labels[x], key="triage_case")
+    a = data.alert(case_id)
+    if not a:
+        return
+    _case_panel(a, as_of)
+
+
+def _case_panel(a: dict, as_of: pd.Timestamp):
+    clock = data.filing_clock(a, reference=as_of)
+    cust = data.customer(a["CUSTOMER_ID"]) or {}
+    txns = data.transactions()
+    ev = txns[txns["TRANSACTION_ID"].isin(a["TRANSACTION_IDS"])] if not txns.empty else txns
+
+    with st.container(border=True):
+        flags = ""
+        if cust.get("PEP_FLAG"):
+            flags += ui.badge("PEP", "gold")
+        if cust.get("SANCTIONS_FLAG"):
+            flags += ui.badge("Sanctions match", "critical")
+        ui.render(
+            f'<div class="sr-card-head"><div><div class="sr-card-title" style="font-size:1.1rem">'
+            f'{ui.esc(a["ALERT_ID"])} · {ui.esc(a["ALERT_TYPE"])}</div>'
+            f'<div class="sr-card-meta">{ui.esc(cust.get("FULL_NAME", a.get("CUSTOMER")))} · {ui.esc(a["ACCOUNT_ID"])} · '
+            f'KYC {ui.esc(cust.get("KYC_TIER", "—"))} · detected {pd.Timestamp(a["ALERT_DATE"]):%d %b %Y %H:%M}</div></div>'
+            f'<div>{ui.severity_badge(a["ALERT_SEVERITY"])} {ui.status_badge(a["ALERT_STATUS"])} '
+            f'{ui.clock_badge(clock)} {flags}</div></div>'
+        )
+        c1, c2 = st.columns([1.35, 1], gap="large")
+        with c1:
+            st.markdown(f"**Trigger rule** — {a.get('TRIGGER_RULE') or '—'}")
+            st.markdown(f"**Amount** — {data.format_inr(a['TOTAL_AMOUNT_INR'])} "
+                        f"({data.format_inr(a['TOTAL_AMOUNT_INR'], compact=True)}) across {len(ev)} transaction(s)")
+            st.dataframe(
+                ev[["TRANSACTION_ID", "TRANSACTION_DATE", "AMOUNT_INR", "TRANSACTION_TYPE", "COUNTERPARTY_ACCOUNT", "NARRATION"]],
+                hide_index=True, width="stretch",
+                column_config={"AMOUNT_INR": st.column_config.NumberColumn("Amount (₹)", format="%,.0f"),
+                               "TRANSACTION_DATE": st.column_config.DatetimeColumn("When", format="DD MMM, HH:mm")},
+            )
+        with c2:
+            st.markdown("**Analyst decision**")
+            with st.form(f"triage_form_{a['ALERT_ID']}", border=False):
+                statuses = list(data.TRIAGE_STATUSES)
+                current = a["ALERT_STATUS"] if a["ALERT_STATUS"] in statuses else statuses[0]
+                status = st.selectbox("Disposition", statuses, index=statuses.index(current),
+                                      format_func=lambda s: s.replace("_", " ").title())
+                analyst = st.text_input("Assigned analyst", value=a.get("ANALYST_ASSIGNED") or data.current_analyst())
+                note = st.text_area("Add case note", placeholder="What did you verify? Why this disposition?", height=90)
+                saved = st.form_submit_button("Save decision", icon=":material/gavel:", width="stretch", type="primary")
+            if saved:
+                notes = a.get("INVESTIGATION_NOTES") or ""
+                if note.strip():
+                    stamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+                    notes = (notes + "\n" if notes else "") + f"[{stamp} · {analyst.strip()}] {note.strip()}"
+                ok, err = data.update_alert(a["ALERT_ID"], status, analyst.strip(), notes)
+                if ok:
+                    data.log_event(
+                        "TRIAGE_DECISION", a["ALERT_ID"],
+                        f"Status {a['ALERT_STATUS']} → {status}; analyst {analyst.strip()}"
+                        + (f"; note: {note.strip()}" if note.strip() else ""),
+                    )
+                    st.toast(f"{a['ALERT_ID']} saved as {status.replace('_', ' ').title()}", icon=":material/check_circle:")
+                    st.rerun()
+                else:
+                    st.error(f"Could not save: {err}")
+            if a.get("INVESTIGATION_NOTES"):
+                with st.expander("Case notes", expanded=False):
+                    st.text(a["INVESTIGATION_NOTES"])
+
+        b1, b2, b3 = st.columns(3)
+        if b1.button("Ask the copilot", icon=":material/forum:", width="stretch", key=f"ask_{a['ALERT_ID']}"):
+            nav.goto("copilot", pending_prompt=f"Explain alert {a['ALERT_ID']} and summarise the evidence.")
+        if b2.button("Entity 360", icon=":material/person_search:", width="stretch", key=f"e360_{a['ALERT_ID']}"):
+            nav.goto("entity", entity_focus=a["CUSTOMER_ID"])
+        if b3.button("Draft SAR", icon=":material/description:", width="stretch", type="primary", key=f"sar_{a['ALERT_ID']}"):
+            nav.goto("sar", sar_alert_id=a["ALERT_ID"])
+
+
+def _detection_tab(alerts: pd.DataFrame):
+    ui.section("Detection engine", "The typology rules in utils/risk_signals.py re-run live over TRANSACTIONS, "
+                                   "then reconciled against the alert queue", "radar")
+    txns = data.transactions()
+    sigs = signals_frame(run_all_detectors(txns))
+    alert_txns = {a["ALERT_ID"]: set(a["TRANSACTION_IDS"]) for a in alerts.to_dict("records")} if not alerts.empty else {}
+
+    def coverage(ids):
+        hits = [aid for aid, t in alert_txns.items() if t.intersection(ids)]
+        return ", ".join(hits) if hits else "NEW — no alert covers this"
+
+    if not sigs.empty:
+        sigs["COVERED_BY"] = sigs["TRANSACTION_IDS"].map(coverage)
+    uncovered = int((sigs["COVERED_BY"].str.startswith("NEW")).sum()) if not sigs.empty else 0
+    ui.kpi_cards([
+        {"label": "Rules", "value": len(RULE_CATALOGUE), "sub": "Typologies monitored", "icon": "rule"},
+        {"label": "Signals fired", "value": len(sigs), "sub": f"over {len(txns)} transactions", "icon": "sensors"},
+        {"label": "Covered by alerts", "value": len(sigs) - uncovered, "sub": "Reconciled with AML_ALERTS", "icon": "link"},
+        {"label": "Uncovered", "value": uncovered, "sub": "Candidates for new alerts", "icon": "new_releases",
+         "tone": "high" if uncovered else ""},
+    ])
+    if sigs.empty:
+        st.info("No detector fired on the current transactions.")
+    else:
+        st.dataframe(
+            sigs.drop(columns=["TRANSACTION_IDS"]),
+            hide_index=True, width="stretch",
+            column_config={"AMOUNT_INR": st.column_config.NumberColumn("Amount (₹)", format="%,.0f"),
+                           "DESCRIPTION": st.column_config.TextColumn(width="large")},
+        )
+    with st.expander("Rule catalogue", icon=":material/menu_book:"):
+        st.dataframe(pd.DataFrame(RULE_CATALOGUE), hide_index=True, width="stretch")
+
+
+def _ml_tab():
+    ui.section("ML risk model — rule-based vs. Snowpark ML score",
+               "COMPUTED_RISK_SCORE comes from ml_pipeline/fraud_classifier.py; points above the dashed line are "
+               "accounts the model rates riskier than the rules", "model_training")
+    ml = data.ml_features()
+    if ml.empty:
+        st.info("No ML feature snapshots yet — run `python ml_pipeline/fraud_classifier.py --mode score`.")
+        return
+    ml = ml.copy()
+    ml["GAP"] = ml["COMPUTED_RISK_SCORE"] - ml["RISK_SCORE"]
+    agree = int((ml["GAP"].abs() <= 0.1).sum())
+    ui.kpi_cards([
+        {"label": "Scored accounts", "value": len(ml), "sub": "Latest feature snapshot", "icon": "model_training"},
+        {"label": "Model ≈ rules", "value": agree, "sub": "within ±0.10", "icon": "balance"},
+        {"label": "Model riskier", "value": int((ml["GAP"] > 0.1).sum()), "sub": "> 0.10 above rules",
+         "icon": "trending_up", "tone": "high"},
+        {"label": "Labelled fraud", "value": int(ml["IS_FRAUD_LABEL"].map(bool).sum()), "sub": "Training ground truth",
+         "icon": "fact_check"},
+    ])
+    g, t = st.columns([1.1, 1.4], gap="medium")
+    with g:
+        diagonal = alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]})).mark_line(
+            strokeDash=[4, 4], color="#A9A48C").encode(x="x", y="y")
+        scatter = alt.Chart(ml).mark_circle(size=150, opacity=0.9, stroke="#FFFFFF", strokeWidth=1.5).encode(
+            x=alt.X("RISK_SCORE:Q", title="Rule-based score", scale=alt.Scale(domain=[0, 1])),
+            y=alt.Y("COMPUTED_RISK_SCORE:Q", title="ML score", scale=alt.Scale(domain=[0, 1])),
+            color=alt.Color("COMPUTED_RISK_SCORE:Q", title="ML score",
+                            scale=alt.Scale(range=["#8FB5A3", "#C8A24A", "#BA1A1A"], domain=[0, 0.6, 1])),
+            tooltip=["ACCOUNT_ID", "FULL_NAME", alt.Tooltip("RISK_SCORE:Q", format=".2f"),
+                     alt.Tooltip("COMPUTED_RISK_SCORE:Q", format=".2f")],
+        )
+        st.altair_chart(ui.style_chart((diagonal + scatter).properties(height=300)), width="stretch")
+    with t:
+        st.dataframe(
+            ml[["ACCOUNT_ID", "FULL_NAME", "RISK_SCORE", "COMPUTED_RISK_SCORE", "CASH_TXN_RATIO_30D",
+                "JUST_BELOW_THRESHOLD_COUNT", "VELOCITY_SCORE", "GEOGRAPHIC_ANOMALY_SCORE", "ROUND_TRIP_DETECTED"]],
+            hide_index=True, width="stretch", height=300,
+            column_config={
+                "RISK_SCORE": st.column_config.ProgressColumn("Rule", min_value=0, max_value=1, format="%.2f"),
+                "COMPUTED_RISK_SCORE": st.column_config.ProgressColumn("ML", min_value=0, max_value=1, format="%.2f"),
+                "CASH_TXN_RATIO_30D": st.column_config.NumberColumn("Cash %", format="percent"),
+            },
+        )
+    ui.section("Reason codes", "Which features push each high-scoring account up (feature thresholds)", "psychology")
+    for r in ml[ml["COMPUTED_RISK_SCORE"] >= 0.5].to_dict("records"):
+        codes = _reason_codes(r)
+        chips = "".join(
+            f'<span class="sr-reason {tone}">{ui.esc(lbl)} <small>{ui.esc(det)}</small></span>' for lbl, det, tone in codes
+        ) or '<span class="sr-reason">No single feature dominant</span>'
+        ui.render(
+            f'<div class="sr-card"><div class="sr-card-head"><div class="sr-card-title">{ui.esc(r["ACCOUNT_ID"])} · '
+            f'{ui.esc(r.get("FULL_NAME", ""))}</div>{ui.badge("ML " + format(r["COMPUTED_RISK_SCORE"], ".2f"), "dark", dot=False)}</div>'
+            f'<div class="sr-reasons" style="margin-top:.5rem">{chips}</div></div>'
+        )
+
+
+def _monitor_tab(alerts: pd.DataFrame):
+    txns = data.transactions()
+    if txns.empty:
+        st.info("No transactions.")
+        return
+    ui.section("Transaction timeline", "Every movement by amount (log scale). Red rules mark alert detections.", "timeline")
+    tl = txns.copy()
+    tl["KIND"] = tl["IS_CASH"].map({True: "Cash", False: "Transfer"})
+    points = alt.Chart(tl).mark_circle(opacity=0.85, stroke="#FFFFFF", strokeWidth=1).encode(
+        x=alt.X("TRANSACTION_DATE:T", title=None),
+        y=alt.Y("AMOUNT_INR:Q", scale=alt.Scale(type="log"), title="Amount (₹, log)"),
+        color=alt.Color("KIND:N", title=None, scale=alt.Scale(domain=["Cash", "Transfer"], range=["#C8A24A", "#0E6B4E"])),
+        size=alt.Size("AMOUNT_INR:Q", legend=None, scale=alt.Scale(range=[40, 420])),
+        tooltip=["TRANSACTION_ID", "ACCOUNT_ID", "COUNTERPARTY_ACCOUNT", alt.Tooltip("AMOUNT_INR:Q", format=",.0f"),
+                 "TRANSACTION_TYPE", alt.Tooltip("TRANSACTION_DATE:T", format="%d %b %Y %H:%M")],
+    )
+    layers = points
+    if not alerts.empty:
+        rules = alt.Chart(alerts[["ALERT_ID", "ALERT_DATE", "ALERT_TYPE"]]).mark_rule(
+            color="#BA1A1A", strokeDash=[3, 3], opacity=0.6).encode(x="ALERT_DATE:T", tooltip=["ALERT_ID", "ALERT_TYPE"])
+        layers = rules + points
+    st.altair_chart(ui.style_chart(layers.properties(height=300)), width="stretch")
+
+    ui.section("Recent high-value cash transactions", "Cash movements of ₹40,000 or more", "payments")
+    acc = data.accounts()[["ACCOUNT_ID", "FULL_NAME"]]
+    cash = txns[txns["IS_CASH"] & (txns["AMOUNT_INR"] >= 40000)].merge(acc, on="ACCOUNT_ID", how="left").head(20)
+    st.dataframe(
+        cash[["TRANSACTION_ID", "ACCOUNT_ID", "FULL_NAME", "TRANSACTION_DATE", "TRANSACTION_TYPE", "AMOUNT_INR"]],
+        hide_index=True, width="stretch",
+        column_config={"AMOUNT_INR": st.column_config.NumberColumn("Amount (₹)", format="%,.0f"),
+                       "TRANSACTION_DATE": st.column_config.DatetimeColumn("When", format="DD MMM YYYY, HH:mm")},
+    )
+
+    ui.section("High-risk accounts", "Rule-based score above 0.65", "warning")
+    hr = data.accounts()
+    hr = hr[hr["RISK_SCORE"] > 0.65].sort_values("RISK_SCORE", ascending=False)
+    st.dataframe(
+        hr[["ACCOUNT_ID", "FULL_NAME", "KYC_TIER", "STATUS", "PEP_FLAG", "SANCTIONS_FLAG", "RISK_SCORE"]],
+        hide_index=True, width="stretch",
+        column_config={"RISK_SCORE": st.column_config.ProgressColumn("Risk", min_value=0, max_value=1, format="%.2f")},
+    )
 
 
 def render_dashboard():
-    st.markdown("""
-    <div class="sentinel-header">
-        <h1>📊 Risk Command Center</h1>
-        <p>Live overview of AML alerts, high-risk accounts, and transaction monitoring signals.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    mode = data.mode()
+    as_of = data.as_of()
+    alerts = data.alerts()
+    k = data.kpis()
+    ui.page_header(
+        title="Alert Triage",
+        subtitle="Review, assign and dispose of fraud signals — every decision is written back and audit-logged.",
+        eyebrow="Fraud signal triage", eyebrow_icon="notifications_active",
+        chips=[("event", f"Data as of {as_of:%d %b %Y}")], mode=mode,
+    )
 
-    st.caption("🔄 Live — this row re-queries Snowflake automatically every 5 minutes.")
-
-    # ── Top KPI metrics (real auto-refresh via st.fragment) ────
     @st.fragment(run_every="5m")
     def _kpi_row():
-        m1, m2, m3, m4 = st.columns(4)
-
-        open_alerts_df = run_query("""
-            SELECT COUNT(*) AS CNT FROM AML_ALERTS
-            WHERE ALERT_STATUS IN ('OPEN', 'UNDER_REVIEW', 'ESCALATED')
-        """)
-        critical_df = run_query("""
-            SELECT COUNT(*) AS CNT FROM AML_ALERTS
-            WHERE ALERT_SEVERITY = 'CRITICAL' AND ALERT_STATUS != 'CLOSED_FALSE_POSITIVE'
-        """)
-        high_risk_df = run_query("""
-            SELECT COUNT(*) AS CNT FROM ACCOUNTS WHERE RISK_SCORE > 0.7
-        """)
-        sar_pending_df = run_query("""
-            SELECT COUNT(*) AS CNT FROM AML_ALERTS
-            WHERE ALERT_STATUS = 'ESCALATED' AND SAR_FILED = FALSE
-        """)
-
-        def safe_count(df):
-            return int(df.iloc[0, 0]) if not df.empty else 0
-
-        def metric_card(col, css_class, label, value, sub):
-            with col:
-                st.markdown(f"""
-                <div class="metric-card {css_class}">
-                    <div class="metric-card-label">{label}</div>
-                    <div class="metric-card-value">{value}</div>
-                    <div class="metric-card-sub">{sub}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-        metric_card(m1, "", "🚨 Open Alerts", safe_count(open_alerts_df), "Awaiting analyst triage")
-        metric_card(m2, "critical", "🔴 Critical", safe_count(critical_df), "Immediate escalation required")
-        metric_card(m3, "high", "⚠️ High-Risk Accounts", safe_count(high_risk_df), "Risk score above 0.70")
-        metric_card(m4, "medium", "📋 SAR Pending", safe_count(sar_pending_df), "Escalated, not yet filed")
+        kk = data.kpis()
+        ui.kpi_cards([
+            {"label": "Open alerts", "value": kk["open_alerts"], "sub": "Awaiting disposition", "icon": "notifications_active"},
+            {"label": "Critical", "value": kk["critical"], "sub": "Immediate escalation", "icon": "crisis_alert",
+             "tone": "critical", "pulse": kk["critical"] > 0},
+            {"label": "Unassigned", "value": kk["unassigned"], "sub": "Need an owner", "icon": "person_off", "tone": "high"},
+            {"label": "SAR pending", "value": kk["sar_pending"], "sub": "Escalated, not yet filed", "icon": "pending_actions"},
+        ])
 
     _kpi_row()
+    st.caption(f"KPIs refresh every 5 minutes · {k['transactions']} transactions · {k['accounts']} accounts monitored")
 
-    st.divider()
-
-    # ── Two-column layout ─────────────────────────────────────
-    left_col, right_col = st.columns([3, 2])
-
-    # ── Alert queue ───────────────────────────────────────────
-    with left_col, st.container(border=True):
-        st.subheader("🚨 Active Alert Queue")
-
-        alerts_df = run_query("""
-            SELECT
-                a.ALERT_ID,
-                c.FULL_NAME         AS CUSTOMER,
-                a.ALERT_TYPE,
-                a.ALERT_SEVERITY,
-                a.ALERT_STATUS,
-                TO_CHAR(a.ALERT_DATE, 'YYYY-MM-DD HH24:MI') AS DETECTED_AT,
-                TO_CHAR(a.TOTAL_AMOUNT_INR, '999,999,999,999') AS AMOUNT_INR,
-                COALESCE(a.ANALYST_ASSIGNED, '⚠ Unassigned') AS ANALYST
-            FROM AML_ALERTS a
-            JOIN CUSTOMERS c ON a.CUSTOMER_ID = c.CUSTOMER_ID
-            WHERE a.ALERT_STATUS NOT IN ('CLOSED_FALSE_POSITIVE', 'CLOSED_SAR_FILED')
-            ORDER BY
-                CASE a.ALERT_SEVERITY
-                    WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
-                    WHEN 'MEDIUM'   THEN 3 ELSE 4 END,
-                a.ALERT_DATE DESC
-        """)
-
-        if alerts_df.empty:
-            st.info("✅ No active alerts. All clear.")
-        else:
-            # ── Filter tabs + search (client-side, over the fetched queue) ──
-            severities_present = list(alerts_df["ALERT_SEVERITY"].unique())
-            filter_choice = st.radio(
-                "Filter by severity",
-                options=["All"] + severities_present,
-                horizontal=True,
-                label_visibility="collapsed",
-                key="alert_severity_filter",
-            )
-            search_term = st.text_input(
-                "Search",
-                placeholder="Filter by alert ID, customer, or typology…",
-                label_visibility="collapsed",
-                key="alert_search",
-            )
-
-            filtered_df = alerts_df
-            if filter_choice != "All":
-                filtered_df = filtered_df[filtered_df["ALERT_SEVERITY"] == filter_choice]
-            if search_term:
-                mask = filtered_df.apply(
-                    lambda row: search_term.lower() in " ".join(row.astype(str)).lower(), axis=1
-                )
-                filtered_df = filtered_df[mask]
-
-            st.caption(f"Showing {len(filtered_df)} of {len(alerts_df)} active alerts")
-
-            # Colour-code severity
-            def severity_badge(val):
-                colours = {
-                    "CRITICAL": "background-color:#BA1A1A;color:#FFFFFF;font-weight:600",
-                    "HIGH":     "background-color:#A9790A;color:#FFFFFF;font-weight:600",
-                    "MEDIUM":   "background-color:#147C5B;color:#FFFFFF;font-weight:600",
-                    "LOW":      "background-color:#6B7280;color:#FFFFFF;font-weight:600",
-                }
-                return colours.get(val, "")
-
-            styled = filtered_df.style.applymap(severity_badge, subset=["ALERT_SEVERITY"])
-            st.dataframe(styled, use_container_width=True, hide_index=True)
-
-            # Drill into a specific alert
-            selected_alert = st.selectbox(
-                "Drill into alert →",
-                options=[""] + list(filtered_df["ALERT_ID"]),
-                format_func=lambda x: "Select an alert to investigate..." if x == "" else x,
-            )
-            if selected_alert:
-                detail_df = run_query(f"""
-                    SELECT * FROM AML_ALERTS WHERE ALERT_ID = '{selected_alert}'
-                """)
-                if not detail_df.empty:
-                    row = detail_df.iloc[0]
-                    st.markdown(f"""
-                    **Alert:** `{row['ALERT_ID']}` · **Type:** `{row['ALERT_TYPE']}` · **Severity:** `{row['ALERT_SEVERITY']}`
-
-                    **Trigger Rule:** {row['TRIGGER_RULE']}
-
-                    **Investigation Notes:** {row['INVESTIGATION_NOTES'] or '*None yet*'}
-                    """)
-                    if st.button("🔍 Investigate in Chat", key="investigate_btn"):
-                        st.session_state["pending_prompt"] = (
-                            f"Explain the AML alert {selected_alert} and provide a detailed investigation summary."
-                        )
-                        st.session_state["_page_override"] = "🔍 Investigation Chat"
-                        st.info("Switch to **Investigation Chat** in the sidebar →")
-
-    # ── High-risk accounts ────────────────────────────────────
-    with right_col, st.container(border=True):
-        st.subheader("⚠️ High-Risk Accounts")
-        hr_df = run_query("""
-            SELECT
-                a.ACCOUNT_ID,
-                c.FULL_NAME         AS CUSTOMER,
-                c.KYC_TIER,
-                c.PEP_FLAG,
-                c.SANCTIONS_FLAG,
-                ROUND(a.RISK_SCORE, 2) AS RISK_SCORE,
-                a.STATUS
-            FROM ACCOUNTS a
-            JOIN CUSTOMERS c ON a.CUSTOMER_ID = c.CUSTOMER_ID
-            WHERE a.RISK_SCORE > 0.65
-            ORDER BY a.RISK_SCORE DESC
-            LIMIT 15
-        """)
-        if not hr_df.empty:
-            display_df = hr_df.copy()
-            display_df["PEP_FLAG"] = display_df["PEP_FLAG"].map({True: "Yes", False: "No"})
-            display_df["SANCTIONS_FLAG"] = display_df["SANCTIONS_FLAG"].map({True: "Yes", False: "No"})
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No high-risk accounts found.")
-
-    st.divider()
-
-    # ── Alert typology chart & recent cash transactions (side by side) ──
-    chart_col, cash_col = st.columns(2)
-
-    with chart_col, st.container(border=True):
-        st.subheader("📈 Alert Typology by Severity")
-        typology_df = run_query("""
-            SELECT ALERT_TYPE, ALERT_SEVERITY, COUNT(*) AS CNT
-            FROM AML_ALERTS
-            GROUP BY 1, 2
-            ORDER BY CNT DESC
-        """)
-        if not typology_df.empty:
-            chart = (
-                alt.Chart(typology_df)
-                .mark_bar()
-                .encode(
-                    x=alt.X("CNT:Q", title="Alerts"),
-                    y=alt.Y("ALERT_TYPE:N", sort="-x", title=None),
-                    color=alt.Color(
-                        "ALERT_SEVERITY:N",
-                        title="Severity",
-                        scale=alt.Scale(
-                            domain=list(SEVERITY_COLORS.keys()),
-                            range=list(SEVERITY_COLORS.values()),
-                        ),
-                    ),
-                    tooltip=["ALERT_TYPE", "ALERT_SEVERITY", "CNT"],
-                )
-                .properties(height=280)
-            )
-            st.altair_chart(chart, use_container_width=True)
-        else:
-            st.info("No alerts to chart yet.")
-
-    with cash_col, st.container(border=True):
-        st.subheader("🔥 Recent High-Value Cash Transactions")
-        cash_df = run_query("""
-            SELECT
-                t.TRANSACTION_ID,
-                t.ACCOUNT_ID,
-                c.FULL_NAME AS CUSTOMER,
-                TO_CHAR(t.TRANSACTION_DATE, 'YYYY-MM-DD') AS DATE,
-                t.TRANSACTION_TYPE,
-                t.AMOUNT_INR,
-                t.IS_CASH
-            FROM TRANSACTIONS t
-            JOIN ACCOUNTS a ON t.ACCOUNT_ID = a.ACCOUNT_ID
-            JOIN CUSTOMERS c ON a.CUSTOMER_ID = c.CUSTOMER_ID
-            WHERE t.IS_CASH = TRUE
-              AND t.AMOUNT_INR >= 40000
-            ORDER BY t.TRANSACTION_DATE DESC
-            LIMIT 20
-        """)
-        if not cash_df.empty:
-            st.dataframe(cash_df, use_container_width=True, hide_index=True, height=280)
-        else:
-            st.info("No high-value cash transactions found.")
-
-    st.divider()
-
-    # ── ML risk model explainability ──────────────────────────
-    with st.container(border=True):
-        st.subheader("🧬 ML Risk Model — Rule-Based vs. Computed Score")
-        st.caption(
-            "Compares the rule-based `RISK_SCORE` against the Snowpark ML classifier's "
-            "`COMPUTED_RISK_SCORE` (trained by `ml_pipeline/fraud_classifier.py`) for every "
-            "account with a feature snapshot. Large gaps flag accounts the rules alone would miss."
-        )
-
-        ml_df = run_query("""
-            SELECT
-                f.ACCOUNT_ID,
-                c.FULL_NAME                AS CUSTOMER,
-                ROUND(a.RISK_SCORE, 3)     AS RULE_BASED_SCORE,
-                ROUND(f.COMPUTED_RISK_SCORE, 3) AS ML_SCORE,
-                f.CASH_TXN_RATIO_30D,
-                f.JUST_BELOW_THRESHOLD_COUNT,
-                f.VELOCITY_SCORE,
-                f.UNIQUE_COUNTERPARTIES_30D,
-                f.ROUND_TRIP_DETECTED,
-                TO_CHAR(f.FEATURE_DATE, 'YYYY-MM-DD') AS FEATURE_DATE
-            FROM ML_RISK_FEATURES f
-            JOIN ACCOUNTS a  ON f.ACCOUNT_ID = a.ACCOUNT_ID
-            JOIN CUSTOMERS c ON a.CUSTOMER_ID = c.CUSTOMER_ID
-            ORDER BY f.COMPUTED_RISK_SCORE DESC
-        """)
-
-        if ml_df.empty:
-            st.info(
-                "No ML feature snapshots yet — run `python ml_pipeline/fraud_classifier.py "
-                "--mode score` to populate COMPUTED_RISK_SCORE."
-            )
-        else:
-            gauge_col, table_col = st.columns([2, 3])
-
-            with gauge_col:
-                diagonal = alt.Chart(
-                    pd.DataFrame({"x": [0, 1], "y": [0, 1]})
-                ).mark_line(strokeDash=[4, 4], color="#A9A48C").encode(x="x", y="y")
-
-                scatter = (
-                    alt.Chart(ml_df)
-                    .mark_circle(size=110, opacity=0.85)
-                    .encode(
-                        x=alt.X("RULE_BASED_SCORE:Q", title="Rule-based score", scale=alt.Scale(domain=[0, 1])),
-                        y=alt.Y("ML_SCORE:Q", title="ML computed score", scale=alt.Scale(domain=[0, 1])),
-                        color=alt.Color(
-                            "ML_SCORE:Q",
-                            title="ML score",
-                            scale=alt.Scale(scheme="redyellowgreen", reverse=True, domain=[0, 1]),
-                        ),
-                        tooltip=["ACCOUNT_ID", "CUSTOMER", "RULE_BASED_SCORE", "ML_SCORE"],
-                    )
-                    .properties(height=280)
-                )
-                st.altair_chart(diagonal + scatter, use_container_width=True)
-                st.caption("Points above the dashed line: the ML model rates the account riskier than the rules do.")
-
-            with table_col:
-                display_ml = ml_df.copy()
-                display_ml["ROUND_TRIP_DETECTED"] = display_ml["ROUND_TRIP_DETECTED"].map({True: "Yes", False: "No"})
-                st.dataframe(display_ml, use_container_width=True, hide_index=True, height=280)
+    t1, t2, t3, t4 = st.tabs([":material/inbox: Alert queue", ":material/radar: Detection engine",
+                              ":material/model_training: ML risk model", ":material/monitoring: Transaction monitor"])
+    with t1:
+        _queue_tab(alerts, as_of)
+    with t2:
+        _detection_tab(alerts)
+    with t3:
+        _ml_tab()
+    with t4:
+        _monitor_tab(alerts)

@@ -130,6 +130,23 @@ CREATE OR REPLACE TABLE ML_RISK_FEATURES (
     PRIMARY KEY (ACCOUNT_ID, FEATURE_DATE)
 );
 
+-- ─────────────────────────────────────────────────────────────
+-- AML_AUDIT_LOG — hash-chained, append-only record of analyst actions
+-- (the app also creates this lazily with CREATE TABLE IF NOT EXISTS)
+-- ─────────────────────────────────────────────────────────────
+CREATE OR REPLACE TABLE AML_AUDIT_LOG (
+    EVENT_SEQ   INT            NOT NULL,
+    EVENT_ID    VARCHAR(40)    NOT NULL,
+    EVENT_TS    TIMESTAMP_NTZ  NOT NULL,
+    ANALYST     VARCHAR(200),
+    ACTION      VARCHAR(100),
+    ENTITY_ID   VARCHAR(100),
+    DETAIL      VARCHAR,
+    PREV_HASH   VARCHAR(64),
+    ENTRY_HASH  VARCHAR(64),
+    PRIMARY KEY (EVENT_SEQ)
+);
+
 -- Grants
 GRANT SELECT ON ALL TABLES IN SCHEMA SENTINEL_REG.DATA TO ROLE SENTINEL_REG_ROLE;
 GRANT SELECT ON FUTURE TABLES IN SCHEMA SENTINEL_REG.DATA TO ROLE SENTINEL_REG_ROLE;

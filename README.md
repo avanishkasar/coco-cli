@@ -29,6 +29,23 @@ The system moves a compliance analyst from a raw alert all the way to a document
 
 ---
 
+## What's in the app
+
+| Page | What it does |
+|---|---|
+| Overview | KPIs, priority queue with 7-day STR filing clocks, severity/exposure charts, fund-flow ring insight |
+| Alert Triage | Human-in-the-loop dispositions (written back to `AML_ALERTS`), re-runnable detection engine (5 typologies), ML vs rule-based scores with reason codes |
+| Investigation Copilot | Cortex Analyst text-to-SQL chat; deterministic offline router when Snowflake is unreachable |
+| Entity 360 | KYC profile, accounts, risk drivers, transactions, alerts, 2-hop fund flow, applicable clauses |
+| Network Intelligence | Graphviz fund-flow map; connected rings show separate alerts are one scheme |
+| Regulatory Library | Ranked keyword search over `REGULATORY_DOCS_CHUNKS`, typology → clause map |
+| SAR Generator | Cortex COMPLETE narrative with citation guardrail, PDF + evidence package (.zip with SHA-256 manifest), filing write-back |
+| Audit Trail | SHA-256 hash-chained log of every decision, query and filing, with tamper detection |
+
+**Demo mode:** without usable Snowflake credentials (or with `SENTINEL_DEMO_MODE=1`) the app runs on `app/data/demo_snapshot.json`, generated from the exact seed SQL.
+
+**Tests:** `pip install -r requirements-dev.txt && SENTINEL_DEMO_MODE=1 pytest tests/`
+
 ## Architecture
 
 ```

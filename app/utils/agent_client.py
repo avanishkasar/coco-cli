@@ -10,13 +10,12 @@ semantic_model/aml_risk_model.yaml, runs that SQL, and returns both the
 explanation and the resulting rows.
 """
 
-import os
 from typing import Generator
 
 import requests
 from dotenv import load_dotenv
 
-from utils.db import get_snowflake_session
+from utils.db import env, get_snowflake_session, is_live
 
 load_dotenv()
 
@@ -30,11 +29,13 @@ def _config() -> dict:
     meant a stale/empty PAT could get baked in for the life of the running
     process, causing every request to silently send "Bearer None".
     """
-    db = os.getenv("SNOWFLAKE_DATABASE", "SENTINEL_REG")
-    schema = os.getenv("SNOWFLAKE_SCHEMA", "DATA")
-    host = os.getenv("SENTINEL_REG_HOST")
+    db = env("SNOWFLAKE_DATABASE", "SENTINEL_REG")
+    schema = env("SNOWFLAKE_SCHEMA", "DATA")
+    host = env("SENTINEL_REG_HOST")
+    if host:
+        host = host.removeprefix("https://").removeprefix("http://").rstrip("/")
     return {
-        "pat": os.getenv("SENTINEL_REG_PAT"),
+        "pat": env("SENTINEL_REG_PAT"),
         "host": host,
         "db": db,
         "schema": schema,
@@ -43,8 +44,32 @@ def _config() -> dict:
     }
 
 
-def build_message(role: str, text: str) -> dict:
-    return {"role": role, "content": [{"type": "text", "text": text}]}
+def analyst_available() -> bool:
+    """Cortex Analyst needs a PAT + host to generate SQL and a live Snowpark session to run it."""
+    cfg = _config()
+    return bool(cfg["pat"] and cfg["host"]) and is_live()
+
+
+def build_message(role: str, text: str, sql: str | None = None) -> dict:
+    """
+    One turn in Cortex Analyst's request format. The API only accepts the
+    roles "user" and "analyst"; "assistant" is mapped for older callers.
+    """
+    role = "analyst" if role == "assistant" else role
+    content = [{"type": "text", "text": text or ("Here is the result." if role == "analyst" else "")}]
+    if role == "analyst" and sql:
+        content.append({"type": "sql", "statement": sql})
+    return {"role": role, "content": content}
+
+
+def _normalise_roles(history: list[dict]) -> list[dict]:
+    out = []
+    for msg in history:
+        msg = dict(msg)
+        if msg.get("role") == "assistant":
+            msg["role"] = "analyst"
+        out.append(msg)
+    return out
 
 
 def stream_agent_response(
@@ -69,7 +94,7 @@ def stream_agent_response(
         return
 
     payload = {
-        "messages": conversation_history,
+        "messages": _normalise_roles(conversation_history),
         "semantic_model_file": cfg["semantic_model_file"],
     }
 

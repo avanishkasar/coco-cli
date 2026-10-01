@@ -14,7 +14,8 @@ It combines:
   queried via SQL/ILIKE rather than Cortex Search — see below)
 - **Snowflake ML (Snowpark ML)** — gradient-boosted fraud classifier producing `COMPUTED_RISK_SCORE`,
   surfaced live in the Risk Dashboard against the rule-based `RISK_SCORE`
-- **Streamlit** — investigation chat, risk command center, SAR generator UI
+- **Streamlit** — overview, alert triage, investigation copilot, Entity 360, network map, regulatory library, SAR generator and hash-chained audit trail
+- **Demo mode** — with no usable Snowflake credentials (or `SENTINEL_DEMO_MODE=1`) the app runs from `app/data/demo_snapshot.json`, generated from `setup/03` + `setup/04` by `scripts/build_demo_snapshot.py`
 
 > Cortex Search is intentionally not used: it depends on `EMBED_TEXT_768`, which is
 > unavailable on trial accounts. `setup/04_cortex_search.sql` has the Cortex Search
@@ -29,6 +30,8 @@ It combines:
 | `regulatory_docs/*.md` | Source regulatory text (chunked into `REGULATORY_DOCS_CHUNKS` by `setup/04_cortex_search.sql`) |
 | `ml_pipeline/fraud_classifier.py` | Trains/scores the Snowpark ML fraud classifier |
 | `app/` | Streamlit application (`main.py`, `views/`, `utils/`). The page modules live in `app/views/`, not `app/pages/` — Streamlit reserves the `pages/` directory name for its own auto-discovery, which collides with the explicit `st.navigation`/`st.Page` routing this app uses in `main.py`. |
+| `app/utils/data.py` | Single data-access layer (live Snowflake and demo snapshot return identical shapes) |
+| `tests/` | `SENTINEL_DEMO_MODE=1 pytest tests/` — page renders, flows, and live SQL executed against DuckDB |
 | `.coco/skills/` | CoCo CLI Agent Skills scoped to this project |
 
 ## Conventions
@@ -43,7 +46,8 @@ It combines:
   `semantic_model/aml_risk_model.yaml` (so Cortex Analyst can query it) →
   `app/utils/risk_signals.py` (if it needs a reusable detection rule).
 - Regulatory citations in the UI and generated SARs must trace back to a row in
-  `REGULATORY_DOCS_CHUNKS` — never let the agent fabricate a citation.
+  `REGULATORY_DOCS_CHUNKS` — never let the agent fabricate a citation. `utils/narrative.py::enforce_citations` strips any bracketed ID not in the supplied clauses.
+- After changing `setup/03` or `setup/04`, re-run `python scripts/build_demo_snapshot.py`.
 
 ## Common tasks
 
