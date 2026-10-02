@@ -15,7 +15,7 @@ CREATE OR REPLACE AGENT AML_RISK_AGENT
     COMMENT = 'SentinelReg AML Risk & Regulatory Intelligence Copilot'
     FROM SPECIFICATION $$
 models:
-  orchestration: claude-sonnet-4-5
+  orchestration: auto
 instructions:
   system: >
     You are SentinelReg, an expert AML (Anti-Money Laundering) and financial
