@@ -60,6 +60,10 @@ def _render_answer(msg: dict, idx: int):
 
 def _ask(prompt: str, use_cortex: bool) -> dict:
     if use_cortex:
+        reg = copilot_offline.regulatory_answer(prompt)
+        if reg:
+            return {"role": "analyst", "text": reg["text"], "df": None, "source": "offline",
+                    "source_label": "Regulatory Library: verbatim clauses from REGULATORY_DOCS_CHUNKS (no LLM, cannot invent a citation)"}
         history = []
         for m in st.session_state.chat_history:
             if m["role"] == "user":

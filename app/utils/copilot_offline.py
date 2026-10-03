@@ -350,3 +350,13 @@ def answer(question: str) -> dict:
         if reg:
             return reg
     return _help()
+
+
+def regulatory_answer(question: str) -> dict | None:
+    """Verbatim clause answer for pure regulation questions (no account/alert IDs), else None."""
+    q = f" {(question or '').strip().lower()} "
+    if ALERT_RE.search(q) or ACC_RE.search(q) or CUST_RE.search(q):
+        return None
+    if not any(c in q for c in _STRONG_REG_CUES):
+        return None
+    return _regulatory_intent(q)

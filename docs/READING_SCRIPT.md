@@ -60,4 +60,4 @@ One more thing, this project also comes with CoCo CLI skills, so the same work c
 
 ---
 
-Before you record: open the live link, refresh the page, and check the left side says "Snowflake · live". Say the word "synthetic" once if someone asks about the data, because the data is made up for the demo.
+Before you record: open the live link, refresh the page, and check the left side says "Snowflake · live". The "Generated SQL" box only appears when it says live, so if it says "Demo snapshot", skip the step where you open Generated SQL and the answers will still work. Say the word "synthetic" once if someone asks about the data, because the data is made up for the demo.

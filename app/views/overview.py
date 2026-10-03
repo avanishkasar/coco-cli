@@ -85,9 +85,9 @@ def render_overview():
                 ui.render(
                     f'<div class="sr-queue-item" style="animation-delay:{i * 0.05:.2f}s">'
                     f'<div class="sr-queue-sev {sev}"></div>'
-                    f'<div><div class="sr-queue-title">{ui.esc(a["ALERT_ID"])} · {ui.esc(a["ALERT_TYPE"])}</div>'
-                    f'<div class="sr-queue-sub">{ui.esc(a.get("CUSTOMER") or a["CUSTOMER_ID"])} · {ui.esc(a["ACCOUNT_ID"])} · '
-                    f'{ui.esc(a.get("ANALYST_ASSIGNED") or "Unassigned")}</div></div>'
+                    f'<div style="min-width:0"><div class="sr-queue-title">{ui.esc(a["ALERT_ID"])}</div>'
+                    f'<div class="sr-queue-sub">{ui.esc(a["ALERT_TYPE"])} · {ui.esc(a.get("CUSTOMER") or a["CUSTOMER_ID"])}</div>'
+                    f'<div class="sr-queue-sub">{ui.esc(a["ACCOUNT_ID"])} · {ui.esc(a.get("ANALYST_ASSIGNED") or "Unassigned")}</div></div>'
                     f'<div class="sr-queue-right"><div class="sr-queue-amt">'
                     f'{ui.esc(data.format_inr(a["TOTAL_AMOUNT_INR"], compact=True))}</div>'
                     f'<div style="margin-top:4px">{ui.severity_badge(a["ALERT_SEVERITY"])} {ui.clock_badge(a["_clock"])}</div>'
@@ -106,15 +106,18 @@ def render_overview():
                 sev = active.groupby("ALERT_SEVERITY").size().reset_index(name="ALERTS")
                 base = alt.Chart(sev).encode(
                     theta=alt.Theta("ALERTS:Q", stack=True),
-                    color=alt.Color("ALERT_SEVERITY:N", title=None,
+                    color=alt.Color("ALERT_SEVERITY:N", title=None, legend=alt.Legend(orient="bottom", columns=2, labelFontSize=11, symbolSize=70),
                                     scale=alt.Scale(domain=list(data.SEVERITY_COLORS),
                                                     range=list(data.SEVERITY_COLORS.values()))),
                     tooltip=[alt.Tooltip("ALERT_SEVERITY:N", title="Severity"), alt.Tooltip("ALERTS:Q", title="Alerts")],
                 )
-                donut = base.mark_arc(innerRadius=58, outerRadius=92, cornerRadius=5, padAngle=0.02)
+                donut = base.mark_arc(innerRadius=50, outerRadius=80, cornerRadius=4, padAngle=0.02)
                 total = alt.Chart(pd.DataFrame({"t": [f"{len(active)}"]})).mark_text(
                     font="Playfair Display", fontSize=30, fontWeight=600, color="#0B2E22").encode(text="t:N")
-                st.altair_chart(ui.style_chart((donut + total).properties(height=230)), width="stretch")
+                st.altair_chart(
+                    ui.style_chart((donut + total).properties(height=210, padding={"top": 14, "bottom": 6, "left": 6, "right": 6})),
+                    width="stretch",
+                )
 
         with st.container(border=True):
             ui.section("Exposure by typology", "Active alert amounts", "stacked_bar_chart")

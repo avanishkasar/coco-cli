@@ -35,6 +35,7 @@ _PLACEHOLDERS = {
     "your_account.snowflakecomputing.com",
 }
 _STATUS_KEY = "_sr_connection_status"
+_CFG_KEY = "_sr_connection_cfg"
 
 
 def env(name: str, default: str | None = None) -> str | None:
@@ -49,56 +50,61 @@ def demo_forced() -> bool:
     return (os.getenv("SENTINEL_DEMO_MODE") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _connection_config() -> tuple[dict | None, str | None]:
+def _connection_config(use_pat: bool = False) -> tuple[dict | None, str | None]:
     account = env("SNOWFLAKE_ACCOUNT")
     user = env("SNOWFLAKE_USER")
-    # A programmatic access token is accepted in place of a password by the
-    # Snowflake drivers, so the PAT already used for Cortex Analyst doubles
-    # as the Snowpark credential when no password is configured.
-    password = env("SNOWFLAKE_PASSWORD") or env("SENTINEL_REG_PAT")
+    password = env("SNOWFLAKE_PASSWORD")
+    pat = env("SENTINEL_REG_PAT")
 
+    # Preferred: password. Fallback: the same programmatic access token that
+    # authenticates Cortex Analyst, passed to Snowpark as a PAT.
+    use_pat = use_pat or (not password and bool(pat))
     missing = [
         name
         for name, value in (
             ("SNOWFLAKE_ACCOUNT", account),
             ("SNOWFLAKE_USER", user),
-            ("SNOWFLAKE_PASSWORD or SENTINEL_REG_PAT", password),
+            ("SNOWFLAKE_PASSWORD or SENTINEL_REG_PAT", pat if use_pat else password),
         )
         if not value
     ]
     if missing:
         return None, f"Missing credentials: {', '.join(missing)}."
 
-    return {
+    cfg = {
         "account": account,
         "user": user,
-        "password": password,
         "role": env("SNOWFLAKE_ROLE", "SENTINEL_REG_ROLE"),
         "warehouse": env("SNOWFLAKE_WAREHOUSE", "SENTINEL_REG_WH"),
         "database": env("SNOWFLAKE_DATABASE", "SENTINEL_REG"),
         "schema": env("SNOWFLAKE_SCHEMA", "DATA"),
-    }, None
+    }
+    if use_pat:
+        cfg.update({"authenticator": "PROGRAMMATIC_ACCESS_TOKEN", "token": pat})
+    else:
+        cfg["password"] = password
+    return cfg, None
 
 
 @st.cache_resource(show_spinner=False)
-def _session_for(account, user, password, role, warehouse, database, schema):
+def _session_for(**cfg):
     from snowflake.snowpark import Session
 
-    return Session.builder.configs({
-        "account": account,
-        "user": user,
-        "password": password,
-        "role": role,
-        "warehouse": warehouse,
-        "database": database,
-        "schema": schema,
-        "login_timeout": 20,
-    }).create()
+    return Session.builder.configs({**cfg, "login_timeout": 20}).create()
 
 
 def _short(exc: Exception, limit: int = 220) -> str:
     text = " ".join(str(exc).split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _try_connect(cfg: dict) -> dict:
+    try:
+        _session_for(**cfg)
+        st.session_state[_CFG_KEY] = cfg
+        return {"live": True, "reason": None}
+    except Exception as exc:  # noqa: BLE001 — any connector failure means "not live"
+        return {"live": False, "reason": f"Snowflake connection failed: {_short(exc)}"}
 
 
 def connection_status() -> dict:
@@ -114,11 +120,11 @@ def connection_status() -> dict:
     if error:
         status = {"live": False, "reason": error}
     else:
-        try:
-            _session_for(**cfg)
-            status = {"live": True, "reason": None}
-        except Exception as exc:  # noqa: BLE001 — any connector failure means "not live"
-            status = {"live": False, "reason": f"Snowflake connection failed: {_short(exc)}"}
+        status = _try_connect(cfg)
+        if not status["live"] and "password" in cfg and env("SENTINEL_REG_PAT"):
+            pat_cfg, _ = _connection_config(use_pat=True)
+            retry = _try_connect(pat_cfg) if pat_cfg else status
+            status = retry if retry["live"] else status
 
     st.session_state[_STATUS_KEY] = status
     return status
@@ -130,6 +136,7 @@ def is_live() -> bool:
 
 def reset_connection() -> None:
     st.session_state.pop(_STATUS_KEY, None)
+    st.session_state.pop(_CFG_KEY, None)
     _session_for.clear()
 
 
@@ -138,9 +145,11 @@ def get_snowflake_session():
     status = connection_status()
     if not status["live"]:
         raise RuntimeError(status["reason"])
-    cfg, error = _connection_config()
-    if error:
-        raise RuntimeError(error)
+    cfg = st.session_state.get(_CFG_KEY)
+    if not cfg:
+        cfg, error = _connection_config()
+        if error:
+            raise RuntimeError(error)
     return _session_for(**cfg)
 
 

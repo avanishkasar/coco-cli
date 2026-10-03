@@ -15,7 +15,8 @@ from typing import Generator
 import requests
 from dotenv import load_dotenv
 
-from utils.db import env, get_snowflake_session, is_live
+from utils import db as _db
+from utils.db import env, is_live
 
 load_dotenv()
 
@@ -138,7 +139,7 @@ def stream_agent_response(
 
     if sql_statement:
         try:
-            session = get_snowflake_session()
+            session = _db.get_snowflake_session()
             df = session.sql(sql_statement).to_pandas()
             yield {"type": "table", "data": df}
         except Exception as exc:

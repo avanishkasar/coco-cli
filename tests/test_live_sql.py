@@ -117,18 +117,55 @@ def test_live_page_renders(fake, module, fn):
     assert fake.executed, "page issued no SQL in live mode"
 
 
-def test_live_triage_update_uses_bound_params(fake):
-    from utils import data
-    import builtins
-    builtins._SR_FAKE = fake
-    from utils import db
-    db.get_snowflake_session = lambda: fake
-    db.connection_status = lambda: {"live": True, "reason": None}
-    data.is_live = lambda: True
-    data.run_statement = db.run_statement
+def test_live_triage_update_uses_bound_params(fake, monkeypatch):
+    from utils import data, db
+    monkeypatch.setattr(db, "get_snowflake_session", lambda: fake)
+    monkeypatch.setattr(db, "connection_status", lambda: {"live": True, "reason": None})
+    monkeypatch.setattr(data, "is_live", lambda: True)
+    monkeypatch.setattr(data, "run_statement", db.run_statement)
     ok, err = data.update_alert("ALERT-2024-0047", "ESCALATED", "A. Analyst", "note")
     assert ok, err
     row = fake.con.execute("SELECT ALERT_STATUS, ANALYST_ASSIGNED FROM AML_ALERTS WHERE ALERT_ID='ALERT-2024-0047'").fetchone()
     assert row == ("ESCALATED", "A. Analyst")
     ok, err = data.update_alert("x' OR '1'='1", "OPEN", None, None)
     assert fake.con.execute("SELECT COUNT(*) FROM AML_ALERTS WHERE ALERT_STATUS='OPEN'").fetchone()[0] == 1
+
+
+def test_live_cortex_analyst_chat_flow(fake, monkeypatch):
+    """Cortex Analyst path: REST call mocked, returned SQL executed (DuckDB), roles sent correctly."""
+    import builtins
+    import requests
+
+    monkeypatch.setenv("SENTINEL_REG_PAT", "test-token")
+    monkeypatch.setenv("SENTINEL_REG_HOST", "acct.snowflakecomputing.com")
+    sent = []
+
+    class Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"message": {"role": "analyst", "content": [
+                {"type": "text", "text": "Here are the open critical alerts."},
+                {"type": "sql", "statement": "SELECT ALERT_ID, TOTAL_AMOUNT_INR FROM AML_ALERTS WHERE ALERT_SEVERITY = 'CRITICAL'"},
+            ]}}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        sent.append((url, json, headers))
+        return Resp()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    builtins._SR_FAKE = fake
+    code = HARNESS.format(app=str(APP_DIR), session_getter="__import__('builtins')._SR_FAKE",
+                          module="views.investigation", fn="render_investigation")
+    at = AppTest.from_string(code, default_timeout=90).run()
+    for q in ("List all open CRITICAL alerts with their total amounts", "and their accounts?"):
+        at.session_state["pending_prompt"] = q
+        at.run()
+        assert not at.exception, [e.value for e in at.exception]
+    hist = at.session_state["chat_history"]
+    assert hist[1]["source"] == "cortex" and hist[1]["sql"] and len(hist[1]["df"]) == 2
+    url, payload, headers = sent[-1]
+    assert url.endswith("/api/v2/cortex/analyst/message")
+    assert headers["X-Snowflake-Authorization-Token-Type"] == "PROGRAMMATIC_ACCESS_TOKEN"
+    assert [m["role"] for m in payload["messages"]] == ["user", "analyst", "user"]
